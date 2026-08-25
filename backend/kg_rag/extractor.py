@@ -179,7 +179,7 @@ def build_document_graph(chunks: List[Document],
             if progress_cb:
                 progress_cb(f"Extracting graph: {done_count}/{total} chunks")
 
-    workers = min(6, total)
+    workers = min(8, total)
     if total > 0:
         with ThreadPoolExecutor(max_workers=workers) as pool:
             futures = [pool.submit(work, i) for i in range(total)]

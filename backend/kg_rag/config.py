@@ -43,7 +43,7 @@ PROVIDERS = {
         key="google", label="Google Gemini",
         base_url="https://generativelanguage.googleapis.com/v1beta/openai/",
         api_key_env="GOOGLE_API_KEY",
-        chat_models=("gemini-2.5-flash",),
+        chat_models=("gemini-flash-latest", "gemini-3.5-flash"),
         embedding_models=("gemini-embedding-001",),
     ),
     "ollama": ProviderSpec(
@@ -79,6 +79,7 @@ class Config:
 
     # ---- Extraction / retrieval ----
     extraction_temperature: float = 0.0
+
     answer_temperature: float = 0.1
     max_k_hop_depth: int = 2
     max_nodes_per_entity: int = 25
