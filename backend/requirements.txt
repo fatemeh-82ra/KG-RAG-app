@@ -1,0 +1,18 @@
+fastapi
+uvicorn[standard]
+python-dotenv
+python-multipart
+langchain
+langchain-community
+langchain-openai
+langchain-chroma
+langchain-text-splitters
+neo4j
+pymupdf
+docx2txt
+chromadb
+requests
+
+# Optional — only needed for local embedding models (provider "local"):
+# sentence-transformers
+# torch
