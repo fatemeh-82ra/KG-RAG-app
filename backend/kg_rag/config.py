@@ -38,6 +38,7 @@ PROVIDERS = {
         api_key_env="NVIDIA_API_KEY",
         # llama-3.3-70b-instruct reached end-of-life (410) -> current free models:
         chat_models=("deepseek-ai/deepseek-v4-flash-0731",
+                     "openai/gpt-oss-120b",
                      "nvidia/nemotron-3-super-120b-a12b"),
         embedding_models=("nvidia/nemotron-3-embed-1b",),
         embedding_uses_input_type=True,
@@ -48,6 +49,12 @@ PROVIDERS = {
         api_key_env="GOOGLE_API_KEY",
         chat_models=("gemini-flash-latest", "gemini-3.5-flash"),
         embedding_models=("gemini-embedding-001",),
+    ),
+    "openrouter": ProviderSpec(
+        key="openrouter", label="OpenRouter",
+        base_url="https://openrouter.ai/api/v1",
+        api_key_env="OPENROUTER_API_KEY",
+        chat_models=("z-ai/glm-5.3-flash",),
     ),
     "ollama": ProviderSpec(
         key="ollama", label="Ollama (local)",
@@ -64,8 +71,9 @@ PROVIDERS = {
 }
 
 # Preference order when auto-picking providers:
-# Google first; NVIDIA takes over automatically if Google fails/quota exhausted.
-CHAT_PROVIDER_ORDER = ("google", "nvidia", "ollama")
+# Google first; NVIDIA takes over automatically if Google fails/quota exhausted;
+# OpenRouter (free GLM) is the next safety net; Ollama/local last.
+CHAT_PROVIDER_ORDER = ("google", "nvidia", "openrouter", "ollama")
 EMBEDDING_PROVIDER_ORDER = ("google", "nvidia", "ollama", "local")
 
 
