@@ -463,6 +463,18 @@ export default function App() {
       />
 
       <main className="chat">
+        <div className="app-bar">
+          <span className="app-title">KG-RAG</span>
+          <span className="spacer" />
+          <span className="username-chip" title={api.getUsername()}>
+            👤 {api.getUsername()}
+          </span>
+          <button className="btn" title="Log out"
+                  onClick={() => { api.logout(); setAuthed(false) }}>
+            Log out ⎋
+          </button>
+        </div>
+
         {!activeId ? (
           <div className="placeholder">
             <h2>Hybrid Knowledge-Graph RAG</h2>
@@ -484,13 +496,6 @@ export default function App() {
               </select>
               <button className="btn" onClick={openProviders} title="Manage custom LLM providers">
                 ⚙ Providers
-              </button>
-              <span className="username-chip" title={api.getUsername()}>
-                👤 {api.getUsername()}
-              </span>
-              <button className="btn" title="Log out"
-                      onClick={() => { api.logout(); setAuthed(false) }}>
-                ⎋
               </button>
             </div>
 
