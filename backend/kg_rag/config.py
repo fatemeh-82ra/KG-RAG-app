@@ -36,7 +36,9 @@ PROVIDERS = {
         key="nvidia", label="NVIDIA NIM",
         base_url="https://integrate.api.nvidia.com/v1",
         api_key_env="NVIDIA_API_KEY",
-        chat_models=("meta/llama-3.3-70b-instruct",),
+        # llama-3.3-70b-instruct reached end-of-life (410) -> current free models:
+        chat_models=("deepseek-ai/deepseek-v4-flash-0731",
+                     "nvidia/nemotron-3-super-120b-a12b"),
         embedding_models=("nvidia/nemotron-3-embed-1b",),
         embedding_uses_input_type=True,
     ),
@@ -51,7 +53,7 @@ PROVIDERS = {
         key="ollama", label="Ollama (local)",
         base_url="http://localhost:11434/v1",
         api_key_env="",
-        chat_models=("llama3.1", "qwen2.5:7b"),
+        chat_models=("gemma3:4b", "llama3.1", "qwen2.5:7b"),
         embedding_models=("bge-m3",),
     ),
     "local": ProviderSpec(
