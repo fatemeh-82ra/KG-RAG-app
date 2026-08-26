@@ -238,3 +238,47 @@ def chat(cid: str, body: ChatIn):
     store.add_message(cid, "user", question)
     store.add_message(cid, "assistant", result["answer"])
     return result
+
+
+@app.post("/api/conversations/{cid}/chat/stream")
+def chat_stream(cid: str, body: ChatIn):
+    """Streaming chat: Server-Sent Events with meta -> token* -> done."""
+    import json
+
+    from fastapi.responses import StreamingResponse
+
+    if not store.get_conversation(cid):
+        raise HTTPException(404, "Conversation not found")
+    question = body.question.strip()
+    if not question:
+        raise HTTPException(400, "Empty question")
+
+    job = JOBS.get(cid, {})
+    if job.get("status") == "processing":
+        raise HTTPException(409, "Still indexing documents — please wait.")
+
+    def sse(obj: dict) -> str:
+        return f"data: {json.dumps(obj, ensure_ascii=False)}\n\n"
+
+    def event_gen():
+        try:
+            pipe = _get_pipeline(cid)
+            meta, tokens = pipe.query_stream(
+                question, body.chat_provider, body.chat_model)
+            yield sse({"type": "meta", **meta})
+
+            parts: list[str] = []
+            for token in tokens:
+                parts.append(token)
+                yield sse({"type": "token", "text": token})
+
+            answer = "".join(parts).strip()
+            store.add_message(cid, "user", question)
+            store.add_message(cid, "assistant", answer)
+            yield sse({"type": "done"})
+        except Exception as exc:                       # noqa: BLE001
+            yield sse({"type": "error", "detail": str(exc)[:300]})
+
+    return StreamingResponse(event_gen(), media_type="text/event-stream",
+                             headers={"Cache-Control": "no-cache",
+                                      "X-Accel-Buffering": "no"})

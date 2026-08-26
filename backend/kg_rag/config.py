@@ -90,6 +90,10 @@ class Config:
     embedding_max_chars: int = 3000
     max_tokens: int = 2048
 
+    # ---- LLM failover speed ----
+    llm_timeout_seconds: int = 60     # per-request timeout -> faster fallback on hangs/504s
+    llm_max_retries: int = 1          # SDK-internal retries before failing over
+
 
 CONFIG = Config()
 

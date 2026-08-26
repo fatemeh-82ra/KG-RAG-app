@@ -161,16 +161,74 @@ export default function App() {
     setInput('')
     setBusy(true)
     setError('')
-    setMessages((m) => [...m, { role: 'user', content: q }])
+    setMessages((m) => [...m, { role: 'user', content: q }, { role: 'assistant', content: '' }])
     try {
       const [provider, model] = modelChoice ? modelChoice.split('|') : [null, null]
-      const res = await api.sendQuestion(activeId, q, provider, model)
-      setMessages((m) => [...m, {
-        role: 'assistant',
-        content: res.answer,
-        meta: `${res.graph_facts} graph facts · ${res.chunks_used} chunks`,
-      }])
-    } catch (e) { setError(e.message) }
+      const res = await fetch(`${import.meta.env.VITE_API_URL || '/api'}/conversations/${activeId}/chat/stream`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ question: q, chat_provider: provider || null, chat_model: model || null }),
+      })
+      if (!res.ok) {
+        let detail = res.statusText
+        try { detail = (await res.json()).detail || detail } catch { /* ignore */ }
+        throw new Error(detail)
+      }
+
+      const reader = res.body.getReader()
+      const decoder = new TextDecoder()
+      let buffer = ''
+      let meta = null
+      let streamed = ''
+
+      const applyMeta = (m) => {
+        if (!m) return
+        meta = m
+        setMessages((msgs) => {
+          const copy = [...msgs]
+          copy[copy.length - 1] = { role: 'assistant', content: streamed || '…', meta: `${m.graph_facts} graph facts · ${m.chunks_used} chunks` }
+          return copy
+        })
+      }
+
+      while (true) {
+        const { done, value } = await reader.read()
+        if (done) break
+        buffer += decoder.decode(value, { stream: true })
+        const events = buffer.split('\n\n')
+        buffer = events.pop() || ''
+        for (const ev of events) {
+          const line = ev.trim()
+          if (!line.startsWith('data:')) continue
+          let payload
+          try { payload = JSON.parse(line.slice(5).trim()) } catch { continue }
+          if (payload.type === 'meta') applyMeta(payload)
+          else if (payload.type === 'token') {
+            streamed += payload.text
+            setMessages((msgs) => {
+              const copy = [...msgs]
+              copy[copy.length - 1] = {
+                role: 'assistant',
+                content: streamed,
+                meta: meta ? `${meta.graph_facts} graph facts · ${meta.chunks_used} chunks` : undefined,
+              }
+              return copy
+            })
+          } else if (payload.type === 'error') {
+            throw new Error(payload.detail || 'Stream error')
+          }
+        }
+      }
+    } catch (e) {
+      setError(e.message)
+      setMessages((msgs) => {
+        const copy = [...msgs]
+        if (copy.length && copy[copy.length - 1].role === 'assistant' && !copy[copy.length - 1].content) {
+          copy.pop()
+        }
+        return copy
+      })
+    }
     finally { setBusy(false) }
   }
 

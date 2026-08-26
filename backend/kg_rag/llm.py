@@ -35,6 +35,9 @@ def _build_chat_llm(p: ProviderSpec, model: str, temperature: float) -> ChatOpen
         base_url=p.base_url,
         temperature=temperature,
         max_tokens=CONFIG.max_tokens,
+        # Fail fast so provider failover happens quickly (e.g. NVIDIA 504s)
+        timeout=CONFIG.llm_timeout_seconds,
+        max_retries=CONFIG.llm_max_retries,
     )
 
 
@@ -91,6 +94,43 @@ class FallbackChatLLM:
                 return result
             except Exception as exc:                     # noqa: BLE001 - try next provider
                 errors.append(f"{p.key}/{model}: {str(exc)[:150]}")
+        raise RuntimeError(
+            "All chat providers failed -> " + " | ".join(errors))
+
+    @staticmethod
+    def _chunk_text(chunk) -> str:
+        content = getattr(chunk, "content", chunk)
+        if isinstance(content, str):
+            return content
+        if isinstance(content, list):                    # some providers send parts
+            return "".join(part.get("text", "") if isinstance(part, dict) else str(part)
+                           for part in content)
+        return str(content or "")
+
+    def stream(self, messages):
+        """Yield answer chunks token-by-token with the same failover as invoke().
+        Falls to the next provider only if NO token arrived yet from this one."""
+        errors: list[str] = []
+        for p, model in self._candidates():
+            try:
+                llm = _build_chat_llm(p, model, self.temperature)
+                iterator = llm.stream(messages)
+                first = next(iterator)                   # may raise -> next provider
+            except StopIteration:
+                return
+            except Exception as exc:                     # noqa: BLE001
+                errors.append(f"{p.key}/{model}: {str(exc)[:150]}")
+                continue
+            if self._last_working != (p.key, model):
+                print(f"[llm] Using {p.label} ({model}) [stream]")
+            self._last_working = (p.key, model)
+            yield self._chunk_text(first)
+            try:
+                for chunk in iterator:
+                    yield self._chunk_text(chunk)
+            except Exception:                            # mid-stream drop: stop gracefully
+                return
+            return
         raise RuntimeError(
             "All chat providers failed -> " + " | ".join(errors))
 

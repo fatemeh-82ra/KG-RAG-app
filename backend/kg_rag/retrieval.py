@@ -146,3 +146,28 @@ def generate_answer(question: str, graph_context: str = "", chunk_context: str =
     if REFUSAL_MESSAGE.lower()[:30] in text.lower():
         return REFUSAL_MESSAGE
     return text
+
+
+def generate_answer_stream(question: str, graph_context: str = "",
+                           chunk_context: str = "", llm=None):
+    """Yield the answer in small chunks (token streaming) with provider failover."""
+    graph_context = (graph_context or "").strip()
+    chunk_context = (chunk_context or "").strip()
+    if not graph_context and not chunk_context:
+        yield REFUSAL_MESSAGE
+        return
+
+    llm = llm or get_llm(temperature=CONFIG.answer_temperature)
+    system_prompt = HYBRID_ANSWER_PROMPT.format(
+        refusal=REFUSAL_MESSAGE,
+        graph_context=graph_context or "(no graph facts retrieved)",
+        chunk_context=chunk_context or "(no document excerpts retrieved)",
+    )
+    collected: list[str] = []
+    for piece in llm.stream([
+        ("system", system_prompt),
+        ("human", f"Question: {question}\n\nAnswer:"),
+    ]):
+        if piece:
+            collected.append(piece)
+            yield piece

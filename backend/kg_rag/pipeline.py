@@ -11,6 +11,7 @@ from .neo4j_mgr import get_neo4j_manager
 from .retrieval import (
     format_subgraph_as_text,
     generate_answer,
+    generate_answer_stream,
     retrieve_subgraph,
 )
 from .vectorstore import VectorStore, format_chunks_as_text
@@ -91,6 +92,32 @@ class KnowledgeGraphRAG:
             "graph_facts": len(subgraph.get("relationships", [])),
             "chunks_used": n_chunks,
         }
+
+    def query_stream(self, question: str,
+                     chat_provider: str | None = None,
+                     chat_model: str | None = None) -> tuple[dict, object]:
+        """Like query() but returns (meta, token_generator) for streaming answers."""
+        llm = get_llm(temperature=CONFIG.answer_temperature,
+                      provider=chat_provider, model=chat_model)
+
+        subgraph = retrieve_subgraph(self.manager, question, self.cid,
+                                     chat_provider=chat_provider,
+                                     chat_model=chat_model)
+        graph_context = format_subgraph_as_text(subgraph)
+
+        chunk_context = ""
+        n_chunks = 0
+        if self.vector_store.count() > 0:
+            chunks = self.vector_store.search(question)
+            n_chunks = len(chunks)
+            chunk_context = format_chunks_as_text(chunks)
+
+        meta = {
+            "graph_facts": len(subgraph.get("relationships", [])),
+            "chunks_used": n_chunks,
+        }
+        tokens = generate_answer_stream(question, graph_context, chunk_context, llm=llm)
+        return meta, tokens
 
     # ------------------------------------------------------------------
     # Cleanup
