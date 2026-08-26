@@ -147,6 +147,24 @@ body {
   padding: 8px 12px;
   font-size: 12.5px;
 }
+.login-switch { font-size: 13px; color: var(--muted); margin-top: 4px; }
+.linklike {
+  background: none;
+  border: none;
+  color: var(--accent);
+  cursor: pointer;
+  font-size: 13px;
+  padding: 0;
+  text-decoration: underline;
+}
+.username-chip {
+  color: var(--muted);
+  font-size: 12.5px;
+  white-space: nowrap;
+  max-width: 140px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
 
 /* ---------------- Modals ---------------- */
 

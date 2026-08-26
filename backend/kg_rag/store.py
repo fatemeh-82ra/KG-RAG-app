@@ -50,22 +50,33 @@ def init_db() -> None:
             embedding_model TEXT DEFAULT '',
             created_at REAL NOT NULL
         );
+        CREATE TABLE IF NOT EXISTS users (
+            id TEXT PRIMARY KEY,
+            username TEXT NOT NULL UNIQUE COLLATE NOCASE,
+            password_hash TEXT NOT NULL,
+            display_name TEXT DEFAULT '',
+            created_at REAL NOT NULL
+        );
         """)
         # lightweight migration for DBs created before system_prompt existed
         cols = [r["name"] for r in c.execute("PRAGMA table_info(conversations)")]
         if "system_prompt" not in cols:
             c.execute("ALTER TABLE conversations ADD COLUMN system_prompt TEXT DEFAULT ''")
+        cols = [r["name"] for r in c.execute("PRAGMA table_info(conversations)")]
+        if "user_id" not in cols:
+            c.execute("ALTER TABLE conversations ADD COLUMN user_id TEXT DEFAULT ''")
 
 
 # ---------------------------------------------------------------------------
 # Conversations
 # ---------------------------------------------------------------------------
 
-def create_conversation(title: str, system_prompt: str = "") -> dict:
+def create_conversation(title: str, system_prompt: str = "", user_id: str = "") -> dict:
     cid = uuid.uuid4().hex[:12]
     with _conn() as c:
-        c.execute("INSERT INTO conversations (id, title, system_prompt, created_at) "
-                  "VALUES (?, ?, ?, ?)", (cid, title, system_prompt or "", time.time()))
+        c.execute("INSERT INTO conversations (id, title, system_prompt, created_at, user_id) "
+                  "VALUES (?, ?, ?, ?, ?)",
+                  (cid, title, system_prompt or "", time.time(), user_id))
     return {"id": cid, "title": title}
 
 
@@ -85,11 +96,16 @@ def update_conversation(cid: str, title: Optional[str] = None,
                       (system_prompt, cid))
 
 
-def list_conversations() -> List[dict]:
+def list_conversations(user_id: Optional[str] = None) -> List[dict]:
     with _conn() as c:
-        rows = c.execute(
-            "SELECT id, title, created_at FROM conversations ORDER BY created_at DESC"
-        ).fetchall()
+        if user_id:
+            rows = c.execute(
+                "SELECT id, title, created_at FROM conversations WHERE user_id = ? "
+                "ORDER BY created_at DESC", (user_id,)).fetchall()
+        else:
+            rows = c.execute(
+                "SELECT id, title, created_at FROM conversations ORDER BY created_at DESC"
+            ).fetchall()
         return [dict(r) for r in rows]
 
 

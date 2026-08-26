@@ -174,16 +174,19 @@ function ProvidersModal({ providers, onAdd, onDelete, onClose }) {
 }
 
 function LoginScreen({ onLogin }) {
+  const [mode, setMode] = useState('login')          // 'login' | 'signup'
+  const [username, setUsername] = useState('')
   const [password, setPassword] = useState('')
   const [err, setErr] = useState('')
   const [busy, setBusy] = useState(false)
 
   const submit = async (e) => {
     e.preventDefault()
-    if (!password || busy) return
+    if (!username || !password || busy) return
     setBusy(true); setErr('')
     try {
-      await api.login(password)
+      if (mode === 'signup') await api.signup(username, password)
+      else await api.login(username, password)
       onLogin()
     } catch (ex) { setErr(ex.message) }
     finally { setBusy(false) }
@@ -195,16 +198,37 @@ function LoginScreen({ onLogin }) {
         <h2>🔐 KG-RAG</h2>
         <p>Hybrid Knowledge-Graph RAG</p>
         <input
-          type="password"
-          placeholder="App password"
-          value={password}
-          onChange={(e) => setPassword(e.target.value)}
+          type="text"
+          placeholder="Username"
+          value={username}
+          onChange={(e) => setUsername(e.target.value)}
           autoFocus
         />
+        <input
+          type="password"
+          placeholder="Password"
+          value={password}
+          onChange={(e) => setPassword(e.target.value)}
+        />
         {err && <div className="login-err">{err}</div>}
-        <button className="btn primary full" disabled={busy || !password}>
-          {busy ? 'Checking…' : 'Log in'}
+        <button className="btn primary full" disabled={busy || !username || !password}>
+          {busy ? 'Please wait…' : (mode === 'signup' ? 'Create account' : 'Log in')}
         </button>
+        <div className="login-switch">
+          {mode === 'login' ? (
+            <>Don&apos;t have an account?{' '}
+              <button type="button" className="linklike" onClick={() => { setMode('signup'); setErr('') }}>
+                Sign up
+              </button>
+            </>
+          ) : (
+            <>Already have an account?{' '}
+              <button type="button" className="linklike" onClick={() => { setMode('login'); setErr('') }}>
+                Log in
+              </button>
+            </>
+          )}
+        </div>
       </form>
     </div>
   )
@@ -461,6 +485,9 @@ export default function App() {
               <button className="btn" onClick={openProviders} title="Manage custom LLM providers">
                 ⚙ Providers
               </button>
+              <span className="username-chip" title={api.getUsername()}>
+                👤 {api.getUsername()}
+              </span>
               <button className="btn" title="Log out"
                       onClick={() => { api.logout(); setAuthed(false) }}>
                 ⎋

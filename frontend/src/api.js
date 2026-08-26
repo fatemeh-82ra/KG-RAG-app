@@ -13,24 +13,45 @@ function authHeaders(extra = {}) {
   return { ...(t ? { 'X-Auth-Token': t } : {}), ...extra }
 }
 
-export async function login(password) {
-  const res = await fetch(`${BASE}/login`, {
+export async function login(username, password) {
+  const res = await fetch(`${BASE}/auth/login`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ password }),
+    body: JSON.stringify({ username, password }),
   })
   if (!res.ok) {
     let detail = 'Login failed'
     try { detail = (await res.json()).detail || detail } catch { /* ignore */ }
     throw new Error(detail)
   }
-  const { token } = await res.json()
+  const { token, username: u } = await res.json()
   setAuthToken(token)
-  return token
+  localStorage.setItem('kg_rag_username', u)
+  return u
 }
+
+export async function signup(username, password, displayName) {
+  const res = await fetch(`${BASE}/auth/signup`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ username, password, display_name: displayName || username }),
+  })
+  if (!res.ok) {
+    let detail = 'Signup failed'
+    try { detail = (await res.json()).detail || detail } catch { /* ignore */ }
+    throw new Error(detail)
+  }
+  const { token, username: u } = await res.json()
+  setAuthToken(token)
+  localStorage.setItem('kg_rag_username', u)
+  return u
+}
+
+export const getUsername = () => localStorage.getItem('kg_rag_username') || ''
 
 export function logout() {
   clearAuthToken()
+  localStorage.removeItem('kg_rag_username')
 }
 
 async function handle(res) {

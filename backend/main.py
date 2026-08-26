@@ -28,26 +28,34 @@ from kg_rag.pipeline import KnowledgeGraphRAG
 from kg_rag.vectorstore import pick_embedding_provider
 
 # ---------------------------------------------------------------------------
-# Simple app-level auth: one shared password (APP_PASSWORD env, default below)
+# Multi-user auth: signup/login, HMAC-signed tokens, per-user conversations
 # ---------------------------------------------------------------------------
 
-APP_PASSWORD = os.getenv("APP_PASSWORD", "kg-rag")
-AUTH_TOKEN = hmac.new(("auth-secret::" + APP_PASSWORD).encode(),
-                      b"kg-rag-login", hashlib.sha256).hexdigest()
+from kg_rag import auth as auth_mod
 
-_OPEN_PATHS = {"/api/login", "/docs", "/redoc", "/openapi.json"}
+_OPEN_PATHS = {"/api/auth/login", "/api/auth/signup", "/docs", "/redoc", "/openapi.json"}
 
 
 def verify_auth(request: Request) -> None:
     path = request.url.path
     if not path.startswith("/api") or path in _OPEN_PATHS:
+        request.state.user_id = None
         return
-    if request.headers.get("X-Auth-Token") == AUTH_TOKEN:
-        return
-    raise HTTPException(401, "Unauthorized — please log in.")
+    token = request.headers.get("X-Auth-Token", "")
+    user = auth_mod.verify_token(token)
+    if not user:
+        raise HTTPException(401, "Unauthorized — please log in.")
+    request.state.user_id = user["user_id"]
+
+
+class SignupIn(BaseModel):
+    username: str
+    password: str
+    display_name: str = ""
 
 
 class LoginIn(BaseModel):
+    username: str
     password: str
 
 
@@ -63,12 +71,24 @@ app.add_middleware(
 )
 
 
-@app.post("/api/login")
-def login(body: LoginIn):
-    """Exchange the app password for a token the frontend sends on every call."""
-    if hmac.compare_digest(body.password, APP_PASSWORD):
-        return {"token": AUTH_TOKEN}
-    raise HTTPException(401, "Wrong password")
+@app.post("/api/auth/signup")
+def api_signup(body: SignupIn):
+    try:
+        user = auth_mod.signup(body.username, body.password, body.display_name)
+    except auth_mod.AuthError as e:
+        raise HTTPException(400, str(e))
+    return {"token": auth_mod.issue_token(user["user_id"], user["username"]),
+            "username": user["username"]}
+
+
+@app.post("/api/auth/login")
+def api_login(body: LoginIn):
+    try:
+        user = auth_mod.login(body.username, body.password)
+    except auth_mod.AuthError as e:
+        raise HTTPException(401, str(e))
+    return {"token": auth_mod.issue_token(user["user_id"], user["username"]),
+            "username": user["username"]}
 
 
 # ---------------------------------------------------------------------------
@@ -84,6 +104,7 @@ _LOCK = threading.Lock()
 def _startup() -> None:
     ensure_dirs()
     store.init_db()
+    auth_mod.init_users_db()
 
 
 def _get_pipeline(cid: str) -> KnowledgeGraphRAG:
@@ -190,10 +211,22 @@ def remove_provider(pid: str):
 # Conversations
 # ---------------------------------------------------------------------------
 
+def _own_conv(request: Request, cid: str) -> dict:
+    """Fetch conversation and enforce ownership (legacy rows with empty user_id are shared)."""
+    conv = store.get_conversation(cid)
+    if not conv:
+        raise HTTPException(404, "Conversation not found")
+    owner = conv.get("user_id") or ""
+    if owner and owner != request.state.user_id:
+        raise HTTPException(403, "This conversation belongs to another user")
+    return conv
+
+
 @app.post("/api/conversations")
-def create_conversation(body: ConversationIn):
+def create_conversation(body: ConversationIn, request: Request):
     conv = store.create_conversation(body.title.strip() or "New conversation",
-                                     body.system_prompt or "")
+                                     body.system_prompt or "",
+                                     user_id=request.state.user_id or "")
 
     # Lock the embedding spec now so later ingests stay consistent
     try:
@@ -205,22 +238,20 @@ def create_conversation(body: ConversationIn):
 
 
 @app.patch("/api/conversations/{cid}")
-def patch_conversation(cid: str, body: ConversationPatch):
-    if not store.get_conversation(cid):
-        raise HTTPException(404, "Conversation not found")
+def patch_conversation(cid: str, body: ConversationPatch, request: Request):
+    _own_conv(request, cid)
     store.update_conversation(cid, body.title, body.system_prompt)
     return {"ok": True}
 
 
 @app.get("/api/conversations")
-def list_conversations():
-    return store.list_conversations()
+def list_conversations(request: Request):
+    return store.list_conversations(user_id=request.state.user_id)
 
 
 @app.delete("/api/conversations/{cid}")
-def delete_conversation(cid: str):
-    if not store.get_conversation(cid):
-        raise HTTPException(404, "Conversation not found")
+def delete_conversation(cid: str, request: Request):
+    _own_conv(request, cid)
     try:
         _get_pipeline(cid).delete_data()
     except Exception as exc:                       # noqa: BLE001
@@ -233,16 +264,14 @@ def delete_conversation(cid: str):
 
 
 @app.get("/api/conversations/{cid}/messages")
-def get_messages(cid: str):
-    if not store.get_conversation(cid):
-        raise HTTPException(404, "Conversation not found")
+def get_messages(cid: str, request: Request):
+    _own_conv(request, cid)
     return store.get_messages(cid)
 
 
 @app.get("/api/conversations/{cid}/documents")
-def get_documents(cid: str):
-    if not store.get_conversation(cid):
-        raise HTTPException(404, "Conversation not found")
+def get_documents(cid: str, request: Request):
+    _own_conv(request, cid)
     return store.list_documents(cid)
 
 
@@ -251,10 +280,8 @@ def get_documents(cid: str):
 # ---------------------------------------------------------------------------
 
 @app.post("/api/conversations/{cid}/documents")
-async def upload_documents(cid: str, files: List[UploadFile] = File(...)):
-    conv = store.get_conversation(cid)
-    if not conv:
-        raise HTTPException(404, "Conversation not found")
+async def upload_documents(cid: str, files: List[UploadFile] = File(...), request: Request = None):
+    conv = _own_conv(request, cid)
     job = JOBS.get(cid, {})
     if job.get("status") == "processing":
         raise HTTPException(409, "This conversation is already processing a document.")
@@ -296,9 +323,8 @@ def _ingest_worker(cid: str, paths: List[str]) -> None:
 
 
 @app.get("/api/conversations/{cid}/status")
-def ingest_status(cid: str):
-    if not store.get_conversation(cid):
-        raise HTTPException(404, "Conversation not found")
+def ingest_status(cid: str, request: Request):
+    _own_conv(request, cid)
     job = JOBS.get(cid)
     if job:
         return job
@@ -313,9 +339,8 @@ def ingest_status(cid: str):
 # ---------------------------------------------------------------------------
 
 @app.post("/api/conversations/{cid}/chat")
-def chat(cid: str, body: ChatIn):
-    if not store.get_conversation(cid):
-        raise HTTPException(404, "Conversation not found")
+def chat(cid: str, body: ChatIn, request: Request):
+    _own_conv(request, cid)
     question = body.question.strip()
     if not question:
         raise HTTPException(400, "Empty question")
@@ -333,14 +358,13 @@ def chat(cid: str, body: ChatIn):
 
 
 @app.post("/api/conversations/{cid}/chat/stream")
-def chat_stream(cid: str, body: ChatIn):
+def chat_stream(cid: str, body: ChatIn, request: Request):
     """Streaming chat: Server-Sent Events with meta -> token* -> done."""
     import json
 
     from fastapi.responses import StreamingResponse
 
-    if not store.get_conversation(cid):
-        raise HTTPException(404, "Conversation not found")
+    _own_conv(request, cid)
     question = body.question.strip()
     if not question:
         raise HTTPException(400, "Empty question")
