@@ -173,6 +173,43 @@ function ProvidersModal({ providers, onAdd, onDelete, onClose }) {
   )
 }
 
+function LoginScreen({ onLogin }) {
+  const [password, setPassword] = useState('')
+  const [err, setErr] = useState('')
+  const [busy, setBusy] = useState(false)
+
+  const submit = async (e) => {
+    e.preventDefault()
+    if (!password || busy) return
+    setBusy(true); setErr('')
+    try {
+      await api.login(password)
+      onLogin()
+    } catch (ex) { setErr(ex.message) }
+    finally { setBusy(false) }
+  }
+
+  return (
+    <div className="login-wrap">
+      <form className="login-box" onSubmit={submit}>
+        <h2>🔐 KG-RAG</h2>
+        <p>Hybrid Knowledge-Graph RAG</p>
+        <input
+          type="password"
+          placeholder="App password"
+          value={password}
+          onChange={(e) => setPassword(e.target.value)}
+          autoFocus
+        />
+        {err && <div className="login-err">{err}</div>}
+        <button className="btn primary full" disabled={busy || !password}>
+          {busy ? 'Checking…' : 'Log in'}
+        </button>
+      </form>
+    </div>
+  )
+}
+
 function Message({ role, content, meta }) {
   return (
     <div className={`msg ${role}`}>
@@ -197,13 +234,25 @@ export default function App() {
   const [error, setError] = useState('')
   const [modal, setModal] = useState(null)          // null | {mode:'new'} | {mode:'edit',conv} | {mode:'providers'}
   const [providers, setProviders] = useState([])
+  const [authed, setAuthed] = useState(!!api.getAuthToken())
   const bottomRef = useRef(null)
 
   const refreshConversations = useCallback(() => {
     api.fetchConversations().then(setConversations).catch(() => {})
   }, [])
 
-  useEffect(() => { refreshConversations() ; api.fetchModels().then(setModels).catch(() => {}) }, [refreshConversations])
+  useEffect(() => {
+    const onUnauthorized = () => setAuthed(false)
+    window.addEventListener('kg-rag-unauthorized', onUnauthorized)
+    return () => window.removeEventListener('kg-rag-unauthorized', onUnauthorized)
+  }, [])
+
+  useEffect(() => {
+    if (authed) {
+      refreshConversations()
+      api.fetchModels().then(setModels).catch(() => {})
+    }
+  }, [authed, refreshConversations])
 
   // Poll ingestion status while processing
   useEffect(() => {
@@ -302,7 +351,10 @@ export default function App() {
       const [provider, model] = modelChoice ? modelChoice.split('|') : [null, null]
       const res = await fetch(`${import.meta.env.VITE_API_URL || '/api'}/conversations/${activeId}/chat/stream`, {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
+        headers: {
+          'Content-Type': 'application/json',
+          ...(api.getAuthToken() ? { 'X-Auth-Token': api.getAuthToken() } : {}),
+        },
         body: JSON.stringify({ question: q, chat_provider: provider || null, chat_model: model || null }),
       })
       if (!res.ok) {
@@ -370,6 +422,8 @@ export default function App() {
 
   const chatProviders = models.chat.filter((p) => p.available)
 
+  if (!authed) return <LoginScreen onLogin={() => setAuthed(true)} />
+
   return (
     <div className="layout">
       <Sidebar
@@ -406,6 +460,10 @@ export default function App() {
               </select>
               <button className="btn" onClick={openProviders} title="Manage custom LLM providers">
                 ⚙ Providers
+              </button>
+              <button className="btn" title="Log out"
+                      onClick={() => { api.logout(); setAuthed(false) }}>
+                ⎋
               </button>
             </div>
 

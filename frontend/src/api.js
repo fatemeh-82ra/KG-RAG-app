@@ -2,7 +2,43 @@
 // In production, set VITE_API_URL to your backend URL, e.g. https://my-app.onrender.com/api
 const BASE = import.meta.env.VITE_API_URL || '/api'
 
+const TOKEN_KEY = 'kg_rag_auth_token'
+
+export const getAuthToken = () => localStorage.getItem(TOKEN_KEY)
+export const setAuthToken = (t) => localStorage.setItem(TOKEN_KEY, t)
+export const clearAuthToken = () => localStorage.removeItem(TOKEN_KEY)
+
+function authHeaders(extra = {}) {
+  const t = getAuthToken()
+  return { ...(t ? { 'X-Auth-Token': t } : {}), ...extra }
+}
+
+export async function login(password) {
+  const res = await fetch(`${BASE}/login`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ password }),
+  })
+  if (!res.ok) {
+    let detail = 'Login failed'
+    try { detail = (await res.json()).detail || detail } catch { /* ignore */ }
+    throw new Error(detail)
+  }
+  const { token } = await res.json()
+  setAuthToken(token)
+  return token
+}
+
+export function logout() {
+  clearAuthToken()
+}
+
 async function handle(res) {
+  if (res.status === 401) {
+    clearAuthToken()
+    window.dispatchEvent(new Event('kg-rag-unauthorized'))
+    throw new Error('Session expired — please log in again.')
+  }
   if (!res.ok) {
     let detail = res.statusText
     try {
@@ -15,50 +51,53 @@ async function handle(res) {
 }
 
 export const fetchModels = () =>
-  fetch(`${BASE}/models`).then(handle)
+  fetch(`${BASE}/models`, { headers: authHeaders() }).then(handle)
 
 export const fetchConversations = () =>
-  fetch(`${BASE}/conversations`).then(handle)
+  fetch(`${BASE}/conversations`, { headers: authHeaders() }).then(handle)
 
 export const createConversation = (title, systemPrompt = '') =>
   fetch(`${BASE}/conversations`, {
     method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
+    headers: authHeaders({ 'Content-Type': 'application/json' }),
     body: JSON.stringify({ title, system_prompt: systemPrompt }),
   }).then(handle)
 
 export const updateConversation = (id, { title, systemPrompt }) =>
   fetch(`${BASE}/conversations/${id}`, {
     method: 'PATCH',
-    headers: { 'Content-Type': 'application/json' },
+    headers: authHeaders({ 'Content-Type': 'application/json' }),
     body: JSON.stringify({ title, system_prompt: systemPrompt }),
   }).then(handle)
 
 export const deleteConversation = (id) =>
-  fetch(`${BASE}/conversations/${id}`, { method: 'DELETE' }).then(handle)
+  fetch(`${BASE}/conversations/${id}`, {
+    method: 'DELETE', headers: authHeaders(),
+  }).then(handle)
 
 export const uploadDocuments = (id, files) => {
   const fd = new FormData()
   files.forEach((f) => fd.append('files', f))
   return fetch(`${BASE}/conversations/${id}/documents`, {
     method: 'POST',
+    headers: authHeaders(),
     body: fd,
   }).then(handle)
 }
 
 export const fetchStatus = (id) =>
-  fetch(`${BASE}/conversations/${id}/status`).then(handle)
+  fetch(`${BASE}/conversations/${id}/status`, { headers: authHeaders() }).then(handle)
 
 export const fetchDocuments = (id) =>
-  fetch(`${BASE}/conversations/${id}/documents`).then(handle)
+  fetch(`${BASE}/conversations/${id}/documents`, { headers: authHeaders() }).then(handle)
 
 export const fetchMessages = (id) =>
-  fetch(`${BASE}/conversations/${id}/messages`).then(handle)
+  fetch(`${BASE}/conversations/${id}/messages`, { headers: authHeaders() }).then(handle)
 
 export const sendQuestion = (id, question, chatProvider, chatModel) =>
   fetch(`${BASE}/conversations/${id}/chat`, {
     method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
+    headers: authHeaders({ 'Content-Type': 'application/json' }),
     body: JSON.stringify({
       question,
       chat_provider: chatProvider || null,
@@ -66,19 +105,17 @@ export const sendQuestion = (id, question, chatProvider, chatModel) =>
     }),
   }).then(handle)
 
+export const chatStreamURL = () => `${BASE}`
+
 export const fetchProviders = () =>
-  fetch(`${BASE}/providers`).then(handle)
+  fetch(`${BASE}/providers`, { headers: authHeaders() }).then(handle)
 
 export const addProvider = (p) =>
   fetch(`${BASE}/providers`, {
     method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
+    headers: authHeaders({ 'Content-Type': 'application/json' }),
     body: JSON.stringify(p),
   }).then(handle)
 
 export const deleteProvider = (id) =>
-  fetch(`${BASE}/providers/${id}`, { method: 'DELETE' }).then(handle)
-
-export const fetchConversation = (id) =>
-  fetch(`${BASE}/conversations`).then((r) => r.json()).then((list) =>
-    list.find((c) => c.id === id))
+  fetch(`${BASE}/providers/${id}`, { method: 'DELETE', headers: authHeaders() }).then(handle)

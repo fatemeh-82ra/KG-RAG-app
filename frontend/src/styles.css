@@ -104,6 +104,50 @@ body {
 }
 .conv-delete:hover { color: var(--red); }
 
+/* ---------------- Login ---------------- */
+
+.login-wrap {
+  min-height: 100vh;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: radial-gradient(ellipse at top, #1a2033 0%, var(--bg) 60%);
+}
+
+.login-box {
+  background: var(--panel);
+  border: 1px solid var(--border);
+  border-radius: 16px;
+  padding: 36px 34px;
+  width: min(380px, calc(100vw - 40px));
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  box-shadow: 0 20px 60px rgba(0, 0, 0, .5);
+  text-align: center;
+}
+.login-box h2 { font-size: 22px; }
+.login-box p { color: var(--muted); font-size: 13px; margin-bottom: 10px; }
+.login-box input {
+  background: var(--panel2);
+  color: var(--text);
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  padding: 12px 14px;
+  font-size: 14px;
+  outline: none;
+  text-align: center;
+}
+.login-box input:focus { border-color: var(--accent); }
+.login-err {
+  background: rgba(224, 82, 82, .12);
+  border: 1px solid rgba(224, 82, 82, .35);
+  color: var(--red);
+  border-radius: 8px;
+  padding: 8px 12px;
+  font-size: 12.5px;
+}
+
 /* ---------------- Modals ---------------- */
 
 .modal-backdrop {

@@ -4,13 +4,16 @@ Run:  uvicorn main:app --reload --port 8000   (from the backend folder)
 Docs: http://localhost:8000/docs
 """
 
+import hashlib
+import hmac
+import os
 import shutil
 import threading
 import uuid
 from pathlib import Path
 from typing import List, Optional
 
-from fastapi import FastAPI, File, HTTPException, UploadFile
+from fastapi import Depends, FastAPI, File, HTTPException, Request, UploadFile
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
 
@@ -24,14 +27,48 @@ from kg_rag.config import (
 from kg_rag.pipeline import KnowledgeGraphRAG
 from kg_rag.vectorstore import pick_embedding_provider
 
-app = FastAPI(title="KG-RAG API", version="0.1.0")
+# ---------------------------------------------------------------------------
+# Simple app-level auth: one shared password (APP_PASSWORD env, default below)
+# ---------------------------------------------------------------------------
+
+APP_PASSWORD = os.getenv("APP_PASSWORD", "kg-rag")
+AUTH_TOKEN = hmac.new(("auth-secret::" + APP_PASSWORD).encode(),
+                      b"kg-rag-login", hashlib.sha256).hexdigest()
+
+_OPEN_PATHS = {"/api/login", "/docs", "/redoc", "/openapi.json"}
+
+
+def verify_auth(request: Request) -> None:
+    path = request.url.path
+    if not path.startswith("/api") or path in _OPEN_PATHS:
+        return
+    if request.headers.get("X-Auth-Token") == AUTH_TOKEN:
+        return
+    raise HTTPException(401, "Unauthorized — please log in.")
+
+
+class LoginIn(BaseModel):
+    password: str
+
+
+app = FastAPI(title="KG-RAG API", version="0.1.0",
+              dependencies=[Depends(verify_auth)])
 
 app.add_middleware(
     CORSMiddleware,
     allow_origins=["*"],
     allow_methods=["*"],
     allow_headers=["*"],
+    expose_headers=["*"],
 )
+
+
+@app.post("/api/login")
+def login(body: LoginIn):
+    """Exchange the app password for a token the frontend sends on every call."""
+    if hmac.compare_digest(body.password, APP_PASSWORD):
+        return {"token": AUTH_TOKEN}
+    raise HTTPException(401, "Wrong password")
 
 
 # ---------------------------------------------------------------------------
