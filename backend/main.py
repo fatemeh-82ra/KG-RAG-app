@@ -69,6 +69,20 @@ def _get_pipeline(cid: str) -> KnowledgeGraphRAG:
 
 class ConversationIn(BaseModel):
     title: str
+    system_prompt: Optional[str] = ""
+
+
+class ConversationPatch(BaseModel):
+    title: Optional[str] = None
+    system_prompt: Optional[str] = None
+
+
+class ProviderIn(BaseModel):
+    name: str
+    base_url: str
+    api_key: str = ""
+    chat_model: str = ""
+    embedding_model: str = ""
 
 
 class ChatIn(BaseModel):
@@ -95,6 +109,12 @@ def list_models():
         has_key = (not p.api_key_env) or bool(_env(p.api_key_env))
         emb.append({"provider": key, "label": p.label,
                     "models": list(p.embedding_models), "available": has_key})
+    # user-defined custom providers appear in the dropdown too
+    for cp in store.list_custom_providers():
+        if cp.get("chat_model"):
+            chat.append({"provider": f"custom_{cp['id']}",
+                         "label": f"{cp['name']} (custom)",
+                         "models": [cp["chat_model"]], "available": True})
     return {"chat": chat, "embedding": emb}
 
 
@@ -104,12 +124,39 @@ def _env(name: str) -> str:
 
 
 # ---------------------------------------------------------------------------
+# Custom providers (user-defined OpenAI-compatible endpoints, e.g. gapgpt)
+# ---------------------------------------------------------------------------
+
+@app.get("/api/providers")
+def list_providers():
+    return store.list_custom_providers()
+
+
+@app.post("/api/providers")
+def add_provider(body: ProviderIn):
+    if not body.name.strip() or not body.base_url.strip():
+        raise HTTPException(400, "Name and base_url are required")
+    if not (body.chat_model or body.embedding_model):
+        raise HTTPException(400, "Set at least one of chat_model / embedding_model")
+    return store.add_custom_provider(
+        body.name.strip(), body.base_url.strip().rstrip("/"),
+        body.api_key.strip(), body.chat_model.strip(), body.embedding_model.strip())
+
+
+@app.delete("/api/providers/{pid}")
+def remove_provider(pid: str):
+    store.delete_custom_provider(pid)
+    return {"ok": True}
+
+
+# ---------------------------------------------------------------------------
 # Conversations
 # ---------------------------------------------------------------------------
 
 @app.post("/api/conversations")
 def create_conversation(body: ConversationIn):
-    conv = store.create_conversation(body.title.strip() or "New conversation")
+    conv = store.create_conversation(body.title.strip() or "New conversation",
+                                     body.system_prompt or "")
 
     # Lock the embedding spec now so later ingests stay consistent
     try:
@@ -118,6 +165,14 @@ def create_conversation(body: ConversationIn):
     except RuntimeError:
         pass
     return conv
+
+
+@app.patch("/api/conversations/{cid}")
+def patch_conversation(cid: str, body: ConversationPatch):
+    if not store.get_conversation(cid):
+        raise HTTPException(404, "Conversation not found")
+    store.update_conversation(cid, body.title, body.system_prompt)
+    return {"ok": True}
 
 
 @app.get("/api/conversations")

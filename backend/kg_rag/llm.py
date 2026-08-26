@@ -59,6 +59,19 @@ class FallbackChatLLM:
 
     def _candidates(self) -> list[tuple[ProviderSpec, str]]:
         out: list[tuple[ProviderSpec, str]] = []
+        # 0) user-selected custom provider (dropdown: "custom_<id>")
+        if self.preferred_provider and self.preferred_provider.startswith("custom_"):
+            from .store import list_custom_providers
+            wanted = self.preferred_provider[len("custom_"):]
+            for cp in list_custom_providers():
+                if cp["id"] == wanted and cp.get("chat_model"):
+                    out.append((ProviderSpec(
+                        key=self.preferred_provider, label=cp["name"],
+                        base_url=cp["base_url"], api_key_env="",
+                        chat_models=(cp["chat_model"],),
+                        api_key_value=cp.get("api_key", ""),
+                    ), cp["chat_model"]))
+                    break
         # 1) explicit user choice first (dropdown selection)
         if self.preferred_provider and self.preferred_provider in PROVIDERS:
             p = PROVIDERS[self.preferred_provider]
@@ -80,6 +93,17 @@ class FallbackChatLLM:
                     if all(pk.key != key or mm != m for pk, mm in out):
                         out.append((p, m))
                         break
+        # 4) user-defined custom providers (e.g. gapgpt) from Settings
+        from .store import list_custom_providers
+        for cp in list_custom_providers():
+            if cp.get("chat_model") and cp.get("base_url"):
+                spec = ProviderSpec(
+                    key=f"custom_{cp['id']}", label=cp["name"],
+                    base_url=cp["base_url"], api_key_env="",
+                    chat_models=(cp["chat_model"],),
+                    api_key_value=cp.get("api_key", ""),
+                )
+                out.append((spec, cp["chat_model"]))
         return out
 
     def invoke(self, messages):

@@ -125,19 +125,29 @@ DOCUMENT EXCERPTS:
 """
 
 
+def _build_system_prompt(graph_context: str, chunk_context: str,
+                         extra_instructions: str = "") -> str:
+    prompt = HYBRID_ANSWER_PROMPT.format(
+        refusal=REFUSAL_MESSAGE,
+        graph_context=graph_context or "(no graph facts retrieved)",
+        chunk_context=chunk_context or "(no document excerpts retrieved)",
+    )
+    if extra_instructions and extra_instructions.strip():
+        prompt += ("\n\nADDITIONAL BOT INSTRUCTIONS (highest priority — follow these "
+                   "as well, e.g. persona, tone, how to behave when information is "
+                   "missing):\n" + extra_instructions.strip())
+    return prompt
+
+
 def generate_answer(question: str, graph_context: str = "", chunk_context: str = "",
-                    llm=None) -> str:
+                    llm=None, extra_instructions: str = "") -> str:
     graph_context = (graph_context or "").strip()
     chunk_context = (chunk_context or "").strip()
     if not graph_context and not chunk_context:
         return REFUSAL_MESSAGE
 
     llm = llm or get_llm(temperature=CONFIG.answer_temperature)
-    system_prompt = HYBRID_ANSWER_PROMPT.format(
-        refusal=REFUSAL_MESSAGE,
-        graph_context=graph_context or "(no graph facts retrieved)",
-        chunk_context=chunk_context or "(no document excerpts retrieved)",
-    )
+    system_prompt = _build_system_prompt(graph_context, chunk_context, extra_instructions)
     response = llm.invoke([
         ("system", system_prompt),
         ("human", f"Question: {question}\n\nAnswer:"),
@@ -149,7 +159,8 @@ def generate_answer(question: str, graph_context: str = "", chunk_context: str =
 
 
 def generate_answer_stream(question: str, graph_context: str = "",
-                           chunk_context: str = "", llm=None):
+                           chunk_context: str = "", llm=None,
+                           extra_instructions: str = ""):
     """Yield the answer in small chunks (token streaming) with provider failover."""
     graph_context = (graph_context or "").strip()
     chunk_context = (chunk_context or "").strip()
@@ -158,11 +169,7 @@ def generate_answer_stream(question: str, graph_context: str = "",
         return
 
     llm = llm or get_llm(temperature=CONFIG.answer_temperature)
-    system_prompt = HYBRID_ANSWER_PROMPT.format(
-        refusal=REFUSAL_MESSAGE,
-        graph_context=graph_context or "(no graph facts retrieved)",
-        chunk_context=chunk_context or "(no document excerpts retrieved)",
-    )
+    system_prompt = _build_system_prompt(graph_context, chunk_context, extra_instructions)
     collected: list[str] = []
     for piece in llm.stream([
         ("system", system_prompt),

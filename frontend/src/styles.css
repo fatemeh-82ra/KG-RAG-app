@@ -97,11 +97,96 @@ body {
 .conv-item:hover { background: var(--panel2); }
 .conv-item.active { background: var(--panel2); border-color: var(--accent); }
 .conv-title { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.conv-actions { display: flex; gap: 2px; flex-shrink: 0; }
 .conv-delete {
   background: none; border: none; color: var(--muted);
   font-size: 17px; cursor: pointer; line-height: 1;
 }
 .conv-delete:hover { color: var(--red); }
+
+/* ---------------- Modals ---------------- */
+
+.modal-backdrop {
+  position: fixed;
+  inset: 0;
+  background: rgba(5, 8, 15, .65);
+  backdrop-filter: blur(3px);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  z-index: 100;
+}
+
+.modal {
+  background: var(--panel);
+  border: 1px solid var(--border);
+  border-radius: 14px;
+  width: min(560px, calc(100vw - 40px));
+  max-height: 85vh;
+  overflow-y: auto;
+  padding: 20px 22px;
+  box-shadow: 0 20px 60px rgba(0, 0, 0, .5);
+}
+
+.modal-head {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  margin-bottom: 14px;
+}
+.modal-head h3 { font-size: 17px; }
+
+.modal-hint {
+  font-size: 12.5px;
+  color: var(--muted);
+  line-height: 1.6;
+  margin-bottom: 12px;
+}
+
+.field { display: flex; flex-direction: column; gap: 5px; margin-bottom: 12px; }
+.field span { font-size: 12.5px; color: var(--muted); }
+.field input, .field textarea {
+  background: var(--panel2);
+  color: var(--text);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  padding: 9px 12px;
+  font-size: 13.5px;
+  font-family: inherit;
+  outline: none;
+  resize: vertical;
+}
+.field input:focus, .field textarea:focus { border-color: var(--accent); }
+
+.modal-actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: 8px;
+  margin-top: 6px;
+}
+
+.provider-list {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  margin-bottom: 16px;
+}
+.provider-item {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  background: var(--panel2);
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  padding: 10px 13px;
+  font-size: 13.5px;
+}
+.provider-meta { font-size: 11.5px; color: var(--muted); margin-top: 2px; }
+.provider-meta.url { direction: ltr; text-align: left; word-break: break-all; }
+.provider-form {
+  border-top: 1px solid var(--border);
+  padding-top: 14px;
+}
 
 /* ---------------- Chat area ---------------- */
 

@@ -8,7 +8,7 @@ const STATUS_LABELS = {
   error: { text: 'Error', cls: 'badge red' },
 }
 
-function Sidebar({ conversations, activeId, status, docs, onSelect, onNew, onDelete, onUpload }) {
+function Sidebar({ conversations, activeId, status, docs, onSelect, onNew, onEdit, onDelete, onUpload }) {
   const fileRef = useRef(null)
 
   return (
@@ -61,17 +61,115 @@ function Sidebar({ conversations, activeId, status, docs, onSelect, onNew, onDel
             onClick={() => onSelect(c.id)}
           >
             <span className="conv-title">{c.title}</span>
-            <button
-              className="conv-delete"
-              title="Delete"
-              onClick={(e) => { e.stopPropagation(); if (confirm(`Delete "${c.title}"?`)) onDelete(c.id) }}
-            >
-              ×
-            </button>
+            <span className="conv-actions">
+              <button
+                className="conv-delete"
+                title="Edit name / bot instructions"
+                onClick={(e) => { e.stopPropagation(); onEdit(c.id) }}
+              >
+                ✎
+              </button>
+              <button
+                className="conv-delete"
+                title="Delete"
+                onClick={(e) => { e.stopPropagation(); if (confirm(`Delete "${c.title}"?`)) onDelete(c.id) }}
+              >
+                ×
+              </button>
+            </span>
           </div>
         ))}
       </div>
     </aside>
+  )
+}
+
+function Modal({ title, children, onClose }) {
+  return (
+    <div className="modal-backdrop" onMouseDown={(e) => { if (e.target === e.currentTarget) onClose() }}>
+      <div className="modal">
+        <div className="modal-head">
+          <h3>{title}</h3>
+          <button className="conv-delete" onClick={onClose}>×</button>
+        </div>
+        {children}
+      </div>
+    </div>
+  )
+}
+
+function ConversationModal({ initial, onSave, onClose }) {
+  const [title, setTitle] = useState(initial?.title || '')
+  const [sys, setSys] = useState(initial?.system_prompt || '')
+  return (
+    <Modal title={initial?.id ? 'Edit conversation' : 'New conversation'} onClose={onClose}>
+      <label className="field">
+        <span>Name</span>
+        <input value={title} onChange={(e) => setTitle(e.target.value)}
+               placeholder="e.g. Bachelor thesis docs" autoFocus />
+      </label>
+      <label className="field">
+        <span>Bot instructions (optional — persona, tone, what to say when info is missing…)</span>
+        <textarea rows={5} value={sys} onChange={(e) => setSys(e.target.value)}
+                  placeholder={'Example:\nYou are the secretary of the university council. Answer formally in Persian. If the answer is not in the documents, politely say you cannot find it and suggest contacting the council office.'} />
+      </label>
+      <div className="modal-actions">
+        <button className="btn" onClick={onClose}>Cancel</button>
+        <button className="btn primary"
+                disabled={!title.trim()}
+                onClick={() => onSave(title.trim(), sys)}>
+          {initial?.id ? 'Save' : 'Create'}
+        </button>
+      </div>
+    </Modal>
+  )
+}
+
+function ProvidersModal({ providers, onAdd, onDelete, onClose }) {
+  const [form, setForm] = useState({ name: '', base_url: '', api_key: '', chat_model: '', embedding_model: '' })
+  const set = (k) => (e) => setForm({ ...form, [k]: e.target.value })
+  return (
+    <Modal title="LLM providers" onClose={onClose}>
+      <p className="modal-hint">
+        Add any OpenAI-compatible API (e.g. gapgpt, OpenRouter, a self-hosted vLLM…).
+        Custom providers are tried after the built-in ones and also appear in the model dropdown.
+      </p>
+
+      <div className="provider-list">
+        {providers.length === 0 && <div className="hint">No custom providers yet.</div>}
+        {providers.map((p) => (
+          <div key={p.id} className="provider-item">
+            <div>
+              <b>{p.name}</b>
+              <div className="provider-meta">
+                {p.chat_model && <>💬 {p.chat_model} </>}
+                {p.embedding_model && <>· 🔢 {p.embedding_model}</>}
+              </div>
+              <div className="provider-meta url">{p.base_url}</div>
+            </div>
+            <button className="conv-delete" title="Remove" onClick={() => onDelete(p.id)}>×</button>
+          </div>
+        ))}
+      </div>
+
+      <div className="provider-form">
+        <label className="field"><span>Name *</span>
+          <input value={form.name} onChange={set('name')} placeholder="gapgpt" /></label>
+        <label className="field"><span>Base URL *</span>
+          <input value={form.base_url} onChange={set('base_url')} placeholder="https://api.example.com/v1" /></label>
+        <label className="field"><span>API key</span>
+          <input type="password" value={form.api_key} onChange={set('api_key')} placeholder="sk-…" /></label>
+        <label className="field"><span>Chat model</span>
+          <input value={form.chat_model} onChange={set('chat_model')} placeholder="gpt-4o-mini" /></label>
+        <label className="field"><span>Embedding model (optional)</span>
+          <input value={form.embedding_model} onChange={set('embedding_model')} placeholder="text-embedding-3-small" /></label>
+        <button className="btn primary full"
+                disabled={!form.name.trim() || !form.base_url.trim()}
+                onClick={() => { onAdd(form); setForm({ name: '', base_url: '', api_key: '', chat_model: '', embedding_model: '' }) }}>
+          + Add provider
+        </button>
+      </div>
+    </Modal>
   )
 }
 
@@ -97,6 +195,8 @@ export default function App() {
   const [input, setInput] = useState('')
   const [busy, setBusy] = useState(false)
   const [error, setError] = useState('')
+  const [modal, setModal] = useState(null)          // null | {mode:'new'} | {mode:'edit',conv} | {mode:'providers'}
+  const [providers, setProviders] = useState([])
   const bottomRef = useRef(null)
 
   const refreshConversations = useCallback(() => {
@@ -133,12 +233,48 @@ export default function App() {
     } catch { setMessages([]) }
   }
 
-  const newConversation = async () => {
-    const title = prompt('Conversation name:', `Chat ${conversations.length + 1}`)
-    if (title === null) return
-    const conv = await api.createConversation(title || 'New conversation')
-    refreshConversations()
-    selectConversation(conv.id)
+  const newConversation = () => setModal({ mode: 'new' })
+
+  const editConversation = async (id) => {
+    const conv = conversations.find((c) => c.id === id)
+    if (conv) setModal({ mode: 'edit', conv })
+  }
+
+  const saveConversation = async (title, systemPrompt) => {
+    try {
+      if (modal?.mode === 'edit' && modal.conv) {
+        await api.updateConversation(modal.conv.id, { title, systemPrompt })
+      } else {
+        const conv = await api.createConversation(title, systemPrompt)
+        refreshConversations()
+        setModal(null)
+        selectConversation(conv.id)
+        return
+      }
+      refreshConversations()
+    } catch (e) { setError(e.message) }
+    setModal(null)
+  }
+
+  const openProviders = async () => {
+    setModal({ mode: 'providers' })
+    try { setProviders(await api.fetchProviders()) } catch { setProviders([]) }
+  }
+
+  const addProvider = async (p) => {
+    try {
+      await api.addProvider(p)
+      setProviders(await api.fetchProviders())
+      api.fetchModels().then(setModels).catch(() => {})
+    } catch (e) { setError(e.message) }
+  }
+
+  const removeProvider = async (id) => {
+    try {
+      await api.deleteProvider(id)
+      setProviders(await api.fetchProviders())
+      api.fetchModels().then(setModels).catch(() => {})
+    } catch (e) { setError(e.message) }
   }
 
   const removeConversation = async (id) => {
@@ -243,6 +379,7 @@ export default function App() {
         docs={docs}
         onSelect={selectConversation}
         onNew={newConversation}
+        onEdit={editConversation}
         onDelete={removeConversation}
         onUpload={upload}
       />
@@ -267,6 +404,9 @@ export default function App() {
                   )),
                 )}
               </select>
+              <button className="btn" onClick={openProviders} title="Manage custom LLM providers">
+                ⚙ Providers
+              </button>
             </div>
 
             <div className="messages">
@@ -297,6 +437,29 @@ export default function App() {
           </>
         )}
       </main>
+
+      {modal?.mode === 'new' && (
+        <ConversationModal
+          initial={{ title: `Chat ${conversations.length + 1}`, system_prompt: '' }}
+          onSave={saveConversation}
+          onClose={() => setModal(null)}
+        />
+      )}
+      {modal?.mode === 'edit' && (
+        <ConversationModal
+          initial={modal.conv}
+          onSave={saveConversation}
+          onClose={() => setModal(null)}
+        />
+      )}
+      {modal?.mode === 'providers' && (
+        <ProvidersModal
+          providers={providers}
+          onAdd={addProvider}
+          onDelete={removeProvider}
+          onClose={() => setModal(null)}
+        />
+      )}
     </div>
   )
 }

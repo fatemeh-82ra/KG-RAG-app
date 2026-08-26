@@ -68,6 +68,11 @@ class KnowledgeGraphRAG:
     # Hybrid query
     # ------------------------------------------------------------------
 
+    def _conversation_instructions(self) -> str:
+        from . import store
+        conv = store.get_conversation(self.cid) or {}
+        return conv.get("system_prompt") or ""
+
     def query(self, question: str,
               chat_provider: str | None = None,
               chat_model: str | None = None) -> dict:
@@ -86,7 +91,8 @@ class KnowledgeGraphRAG:
             n_chunks = len(chunks)
             chunk_context = format_chunks_as_text(chunks)
 
-        answer = generate_answer(question, graph_context, chunk_context, llm=llm)
+        answer = generate_answer(question, graph_context, chunk_context, llm=llm,
+                                 extra_instructions=self._conversation_instructions())
         return {
             "answer": answer,
             "graph_facts": len(subgraph.get("relationships", [])),
@@ -116,7 +122,8 @@ class KnowledgeGraphRAG:
             "graph_facts": len(subgraph.get("relationships", [])),
             "chunks_used": n_chunks,
         }
-        tokens = generate_answer_stream(question, graph_context, chunk_context, llm=llm)
+        tokens = generate_answer_stream(question, graph_context, chunk_context, llm=llm,
+                                        extra_instructions=self._conversation_instructions())
         return meta, tokens
 
     # ------------------------------------------------------------------

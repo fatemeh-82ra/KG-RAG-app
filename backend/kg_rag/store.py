@@ -24,6 +24,7 @@ def init_db() -> None:
             title TEXT NOT NULL,
             embedding_provider TEXT DEFAULT '',
             embedding_model TEXT DEFAULT '',
+            system_prompt TEXT DEFAULT '',
             created_at REAL NOT NULL
         );
         CREATE TABLE IF NOT EXISTS messages (
@@ -40,18 +41,31 @@ def init_db() -> None:
             status TEXT NOT NULL DEFAULT 'queued',
             created_at REAL NOT NULL
         );
+        CREATE TABLE IF NOT EXISTS custom_providers (
+            id TEXT PRIMARY KEY,
+            name TEXT NOT NULL,
+            base_url TEXT NOT NULL,
+            api_key TEXT DEFAULT '',
+            chat_model TEXT DEFAULT '',
+            embedding_model TEXT DEFAULT '',
+            created_at REAL NOT NULL
+        );
         """)
+        # lightweight migration for DBs created before system_prompt existed
+        cols = [r["name"] for r in c.execute("PRAGMA table_info(conversations)")]
+        if "system_prompt" not in cols:
+            c.execute("ALTER TABLE conversations ADD COLUMN system_prompt TEXT DEFAULT ''")
 
 
 # ---------------------------------------------------------------------------
 # Conversations
 # ---------------------------------------------------------------------------
 
-def create_conversation(title: str) -> dict:
+def create_conversation(title: str, system_prompt: str = "") -> dict:
     cid = uuid.uuid4().hex[:12]
     with _conn() as c:
-        c.execute("INSERT INTO conversations (id, title, created_at) VALUES (?, ?, ?)",
-                  (cid, title, time.time()))
+        c.execute("INSERT INTO conversations (id, title, system_prompt, created_at) "
+                  "VALUES (?, ?, ?, ?)", (cid, title, system_prompt or "", time.time()))
     return {"id": cid, "title": title}
 
 
@@ -59,6 +73,16 @@ def get_conversation(cid: str) -> Optional[dict]:
     with _conn() as c:
         row = c.execute("SELECT * FROM conversations WHERE id = ?", (cid,)).fetchone()
         return dict(row) if row else None
+
+
+def update_conversation(cid: str, title: Optional[str] = None,
+                        system_prompt: Optional[str] = None) -> None:
+    with _conn() as c:
+        if title is not None:
+            c.execute("UPDATE conversations SET title = ? WHERE id = ?", (title, cid))
+        if system_prompt is not None:
+            c.execute("UPDATE conversations SET system_prompt = ? WHERE id = ?",
+                      (system_prompt, cid))
 
 
 def list_conversations() -> List[dict]:
@@ -121,3 +145,30 @@ def list_documents(cid: str) -> List[dict]:
         rows = c.execute("SELECT filename, status FROM documents WHERE conversation_id = ? "
                          "ORDER BY id", (cid,)).fetchall()
         return [dict(r) for r in rows]
+
+
+# ---------------------------------------------------------------------------
+# Custom providers (user-defined OpenAI-compatible endpoints)
+# ---------------------------------------------------------------------------
+
+def add_custom_provider(name: str, base_url: str, api_key: str = "",
+                        chat_model: str = "", embedding_model: str = "") -> dict:
+    pid = uuid.uuid4().hex[:10]
+    with _conn() as c:
+        c.execute("INSERT INTO custom_providers "
+                  "(id, name, base_url, api_key, chat_model, embedding_model, created_at) "
+                  "VALUES (?, ?, ?, ?, ?, ?, ?)",
+                  (pid, name, base_url, api_key, chat_model, embedding_model, time.time()))
+    return {"id": pid, "name": name}
+
+
+def list_custom_providers() -> List[dict]:
+    with _conn() as c:
+        rows = c.execute("SELECT id, name, base_url, api_key, chat_model, embedding_model "
+                         "FROM custom_providers ORDER BY created_at").fetchall()
+        return [dict(r) for r in rows]
+
+
+def delete_custom_provider(pid: str) -> None:
+    with _conn() as c:
+        c.execute("DELETE FROM custom_providers WHERE id = ?", (pid,))

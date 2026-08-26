@@ -28,6 +28,7 @@ class ProviderSpec:
     chat_models: tuple = ()
     embedding_models: tuple = ()
     embedding_uses_input_type: bool = False   # NVIDIA-style /embeddings
+    api_key_value: str = ""  # direct key (custom providers stored in DB)
 
 
 PROVIDERS = {
@@ -104,7 +105,9 @@ def ensure_dirs() -> None:
 
 
 def get_api_key(p: ProviderSpec) -> str:
-    return os.getenv(p.api_key_env, "") if p.api_key_env else ""
+    if p.api_key_env:
+        return os.getenv(p.api_key_env, "")
+    return p.api_key_value or ""
 
 
 def provider_available(p: ProviderSpec) -> bool:

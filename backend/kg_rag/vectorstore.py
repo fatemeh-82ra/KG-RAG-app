@@ -114,7 +114,8 @@ def _sanitize_for_embedding(text: str) -> str:
 
 def pick_embedding_provider(preferred: str | None = None,
                             preferred_model: str | None = None) -> tuple[ProviderSpec, str]:
-    """Resolve (provider, embedding_model). Falls back to local BGE-M3."""
+    """Resolve (provider, embedding_model). Falls back to local BGE-M3.
+    User-defined custom providers (with an embedding model set) are tried too."""
     if preferred and preferred in PROVIDERS:
         p = PROVIDERS[preferred]
         models = p.embedding_models
@@ -125,6 +126,17 @@ def pick_embedding_provider(preferred: str | None = None,
         p = PROVIDERS[key]
         if p.embedding_models and (not p.api_key_env or get_api_key(p)):
             return p, p.embedding_models[0]
+    # custom providers from Settings (before giving up to local)
+    from .store import list_custom_providers
+    for cp in list_custom_providers():
+        if cp.get("embedding_model") and cp.get("base_url"):
+            spec = ProviderSpec(
+                key=f"custom_{cp['id']}", label=cp["name"],
+                base_url=cp["base_url"], api_key_env="",
+                embedding_models=(cp["embedding_model"],),
+                api_key_value=cp.get("api_key", ""),
+            )
+            return spec, cp["embedding_model"]
     raise RuntimeError("No embedding provider available.")
 
 

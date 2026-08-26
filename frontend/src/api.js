@@ -20,11 +20,18 @@ export const fetchModels = () =>
 export const fetchConversations = () =>
   fetch(`${BASE}/conversations`).then(handle)
 
-export const createConversation = (title) =>
+export const createConversation = (title, systemPrompt = '') =>
   fetch(`${BASE}/conversations`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ title }),
+    body: JSON.stringify({ title, system_prompt: systemPrompt }),
+  }).then(handle)
+
+export const updateConversation = (id, { title, systemPrompt }) =>
+  fetch(`${BASE}/conversations/${id}`, {
+    method: 'PATCH',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ title, system_prompt: systemPrompt }),
   }).then(handle)
 
 export const deleteConversation = (id) =>
@@ -58,3 +65,20 @@ export const sendQuestion = (id, question, chatProvider, chatModel) =>
       chat_model: chatModel || null,
     }),
   }).then(handle)
+
+export const fetchProviders = () =>
+  fetch(`${BASE}/providers`).then(handle)
+
+export const addProvider = (p) =>
+  fetch(`${BASE}/providers`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(p),
+  }).then(handle)
+
+export const deleteProvider = (id) =>
+  fetch(`${BASE}/providers/${id}`, { method: 'DELETE' }).then(handle)
+
+export const fetchConversation = (id) =>
+  fetch(`${BASE}/conversations`).then((r) => r.json()).then((list) =>
+    list.find((c) => c.id === id))
