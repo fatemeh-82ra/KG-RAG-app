@@ -16,13 +16,17 @@ from .neo4j_mgr import Neo4jManager
 
 QUESTION_ENTITY_PROMPT = """You extract query entities for knowledge graph retrieval. The text may be in English or Persian (Farsi).
 
-Extract the key entities mentioned or implied by the QUESTION. These will be used to find starting nodes in a knowledge graph.
+Extract the key entities mentioned or implied by the QUESTION. These will be used to find starting nodes in a knowledge graph. The knowledge graph itself is mostly in Persian, so entity matching needs both language variants.
 
 Rules:
 1. Output ONLY a JSON array of strings. No explanations, no markdown fences.
 2. Use short, general noun phrases (e.g. "Llama 3", "NVIDIA", "دیجی‌کالا", "هوش مصنوعی").
-3. Keep Persian entities in Persian script.
-4. Include at most 5 entities. If none are relevant, return [].
+3. BILINGUAL: for every entity whose original language differs from Persian, ALSO add
+   its Persian equivalent as a separate entry (e.g. "Digikala" -> add "دیجی‌کالا";
+   "artificial intelligence" -> add "هوش مصنوعی"). Keep original-language entities
+   in the list as well, so both variants are available for matching.
+4. Keep Persian entities in Persian script; never transliterate them to Latin letters.
+5. Include at most 8 entities total (originals + Persian equivalents). If none are relevant, return [].
 
 QUESTION: "{question}"
 
@@ -38,7 +42,7 @@ def extract_question_entities(question: str,
         text = raw.content.strip().replace("```json", "").replace("```", "").strip()
         start, end = text.find("["), text.rfind("]")
         data = json.loads(text[start:end + 1])
-        return [str(x).strip() for x in data if str(x).strip()][:5]
+        return [str(x).strip() for x in data if str(x).strip()][:8]
     except Exception as exc:
         print(f"[graph_retriever] Question entity extraction failed: {exc}")
         return []
@@ -132,6 +136,12 @@ def _build_system_prompt(graph_context: str, chunk_context: str,
         graph_context=graph_context or "(no graph facts retrieved)",
         chunk_context=chunk_context or "(no document excerpts retrieved)",
     )
+    # Always answer in the language the user asked in:
+    # Persian question -> Persian answer, English question -> English answer.
+    prompt += ("\n\nLANGUAGE RULE (high priority): The retrieved context may be in "
+               "Persian even when the question is in English (or vice versa). Use it "
+               "as your knowledge source regardless of language, but write your final "
+               "answer in the SAME language as the user's question.")
     if extra_instructions and extra_instructions.strip():
         prompt += ("\n\nADDITIONAL BOT INSTRUCTIONS (highest priority — follow these "
                    "as well, e.g. persona, tone, how to behave when information is "
