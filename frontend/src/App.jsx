@@ -253,6 +253,7 @@ export default function App() {
   const [docs, setDocs] = useState([])
   const [models, setModels] = useState({ chat: [], embedding: [] })
   const [modelChoice, setModelChoice] = useState('')
+  const [graphModelMode, setGraphModelMode] = useState('auto')  // 'auto' | 'dropdown'
   const [input, setInput] = useState('')
   const [busy, setBusy] = useState(false)
   const [error, setError] = useState('')
@@ -359,7 +360,9 @@ export default function App() {
   const upload = async (files) => {
     if (!files.length || !activeId) return
     try {
-      await api.uploadDocuments(activeId, files)
+      // graphModelMode: 'auto' -> default chain; 'dropdown' -> use selected chat model
+      await api.uploadDocuments(activeId, files,
+        graphModelMode === 'dropdown' ? modelChoice : '')
       setStatus({ status: 'processing', detail: 'Uploading…' })
     } catch (e) { setError(e.message) }
   }
@@ -493,6 +496,11 @@ export default function App() {
                     </option>
                   )),
                 )}
+              </select>
+              <select value={graphModelMode} onChange={(e) => setGraphModelMode(e.target.value)}
+                      title="Which model builds the knowledge graph when you upload files">
+                <option value="auto">Graph model: Auto (fallback chain)</option>
+                <option value="dropdown">Graph model: Same as chat model</option>
               </select>
               <button className="btn" onClick={openProviders} title="Manage custom LLM providers">
                 ⚙ Providers

@@ -13,7 +13,7 @@ import uuid
 from pathlib import Path
 from typing import List, Optional
 
-from fastapi import Depends, FastAPI, File, HTTPException, Request, UploadFile
+from fastapi import Depends, FastAPI, File, Form, HTTPException, Request, UploadFile
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
 
@@ -280,7 +280,10 @@ def get_documents(cid: str, request: Request):
 # ---------------------------------------------------------------------------
 
 @app.post("/api/conversations/{cid}/documents")
-async def upload_documents(cid: str, files: List[UploadFile] = File(...), request: Request = None):
+async def upload_documents(cid: str, files: List[UploadFile] = File(...),
+                           graph_provider: str = Form(""),
+                           graph_model: str = Form(""),
+                           request: Request = None):
     conv = _own_conv(request, cid)
     job = JOBS.get(cid, {})
     if job.get("status") == "processing":
@@ -302,16 +305,24 @@ async def upload_documents(cid: str, files: List[UploadFile] = File(...), reques
         filenames.append(f.filename)
         store.add_document(cid, f.filename)
 
-    thread = threading.Thread(target=_ingest_worker, args=(cid, saved_paths), daemon=True)
+    thread = threading.Thread(
+        target=_ingest_worker,
+        args=(cid, saved_paths, graph_provider or None, graph_model or None),
+        daemon=True)
     thread.start()
     return {"ok": True, "queued": len(saved_paths)}
 
 
-def _ingest_worker(cid: str, paths: List[str]) -> None:
+def _ingest_worker(cid: str, paths: List[str],
+                   graph_provider: str | None = None,
+                   graph_model: str | None = None) -> None:
     JOBS[cid] = {"status": "processing", "detail": "Starting ingestion"}
     try:
         pipe = _get_pipeline(cid)
-        stats = pipe.ingest(paths, progress_cb=lambda msg: JOBS[cid].update(detail=msg))
+        stats = pipe.ingest(paths,
+                            progress_cb=lambda msg: JOBS[cid].update(detail=msg),
+                            chat_provider=graph_provider,
+                            chat_model=graph_model)
         store.set_documents_status(cid, "ready")
         JOBS[cid] = {"status": "ready",
                      "detail": f"{stats['chunks']} chunks, "

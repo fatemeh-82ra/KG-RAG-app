@@ -161,11 +161,16 @@ def extract_graph_from_chunk(text: str, llm=None) -> ExtractedGraph:
 
 
 def build_document_graph(chunks: List[Document],
-                         progress_cb=None) -> ExtractedGraph:
-    """Extract per-chunk graphs IN PARALLEL and merge into one document-level graph."""
+                         progress_cb=None,
+                         chat_provider: str | None = None,
+                         chat_model: str | None = None) -> ExtractedGraph:
+    """Extract per-chunk graphs IN PARALLEL and merge into one document-level graph.
+
+    chat_provider/chat_model: optional explicit model for extraction (dropdown
+    selection). When None, the default fallback chain from config.py is used."""
     from concurrent.futures import ThreadPoolExecutor, as_completed
 
-    llm = get_llm(temperature=0.0)
+    llm = get_llm(temperature=0.0, provider=chat_provider, model=chat_model)
     total = len(chunks)
     done_count = 0
     results = [None] * total

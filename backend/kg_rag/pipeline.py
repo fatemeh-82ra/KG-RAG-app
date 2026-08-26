@@ -39,7 +39,9 @@ class KnowledgeGraphRAG:
     # ------------------------------------------------------------------
 
     def ingest(self, file_paths: List[str],
-               progress_cb: Optional[Callable[[str], None]] = None) -> dict:
+               progress_cb: Optional[Callable[[str], None]] = None,
+               chat_provider: str | None = None,
+               chat_model: str | None = None) -> dict:
         def report(msg: str) -> None:
             if progress_cb:
                 progress_cb(msg)
@@ -58,7 +60,9 @@ class KnowledgeGraphRAG:
         n = self.vector_store.build(chunks, self.embedding_provider, self.embedding_model)
         report(f"Indexed {n} chunks into ChromaDB")
 
-        graph = build_graph_with_progress(chunks, report)
+        graph = build_graph_with_progress(chunks, report,
+                                          chat_provider=chat_provider,
+                                          chat_model=chat_model)
         self.manager.insert_graph(graph, self.cid)
         stats = self.manager.stats(self.cid)
         report("Ingestion complete")
@@ -136,6 +140,10 @@ class KnowledgeGraphRAG:
         shutil.rmtree(chroma_dir, ignore_errors=True)
 
 
-def build_graph_with_progress(chunks, report):
+def build_graph_with_progress(chunks, report,
+                              chat_provider: str | None = None,
+                              chat_model: str | None = None):
     from .extractor import build_document_graph
-    return build_document_graph(chunks, progress_cb=report)
+    return build_document_graph(chunks, progress_cb=report,
+                                chat_provider=chat_provider,
+                                chat_model=chat_model)

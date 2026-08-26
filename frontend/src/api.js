@@ -96,9 +96,14 @@ export const deleteConversation = (id) =>
     method: 'DELETE', headers: authHeaders(),
   }).then(handle)
 
-export const uploadDocuments = (id, files) => {
+export const uploadDocuments = (id, files, graphSelection = '') => {
   const fd = new FormData()
   files.forEach((f) => fd.append('files', f))
+  if (graphSelection) {
+    const [provider, ...rest] = graphSelection.split('|')
+    fd.append('graph_provider', provider)
+    fd.append('graph_model', rest.join('|'))
+  }
   return fetch(`${BASE}/conversations/${id}/documents`, {
     method: 'POST',
     headers: authHeaders(),
