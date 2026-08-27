@@ -77,18 +77,22 @@ export const fetchModels = () =>
 export const fetchConversations = () =>
   fetch(`${BASE}/conversations`, { headers: authHeaders() }).then(handle)
 
-export const createConversation = (title, systemPrompt = '') =>
+export const createConversation = (title, systemPrompt = '', memoryTurns = 5) =>
   fetch(`${BASE}/conversations`, {
     method: 'POST',
     headers: authHeaders({ 'Content-Type': 'application/json' }),
-    body: JSON.stringify({ title, system_prompt: systemPrompt }),
+    body: JSON.stringify({ title, system_prompt: systemPrompt, memory_turns: memoryTurns }),
   }).then(handle)
 
-export const updateConversation = (id, { title, systemPrompt }) =>
+export const updateConversation = (id, { title, systemPrompt, memoryTurns }) =>
   fetch(`${BASE}/conversations/${id}`, {
     method: 'PATCH',
     headers: authHeaders({ 'Content-Type': 'application/json' }),
-    body: JSON.stringify({ title, system_prompt: systemPrompt }),
+    body: JSON.stringify({
+      title,
+      system_prompt: systemPrompt,
+      ...(memoryTurns !== undefined ? { memory_turns: memoryTurns } : {}),
+    }),
   }).then(handle)
 
 export const deleteConversation = (id) =>

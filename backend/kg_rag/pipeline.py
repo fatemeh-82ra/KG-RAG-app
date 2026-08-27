@@ -72,10 +72,19 @@ class KnowledgeGraphRAG:
     # Hybrid query
     # ------------------------------------------------------------------
 
-    def _conversation_instructions(self) -> str:
+    def _conversation_settings(self) -> dict:
         from . import store
         conv = store.get_conversation(self.cid) or {}
-        return conv.get("system_prompt") or ""
+        return {
+            "system_prompt": conv.get("system_prompt") or "",
+            "memory_turns": int(conv.get("memory_turns") or 0),
+        }
+
+    def _memory(self) -> list[dict]:
+        """Recent Q/A turns to inject into the prompt (configurable size)."""
+        from . import store
+        settings = self._conversation_settings()
+        return store.get_memory_pairs(self.cid, settings["memory_turns"])
 
     def query(self, question: str,
               chat_provider: str | None = None,
@@ -83,9 +92,11 @@ class KnowledgeGraphRAG:
         llm = get_llm(temperature=CONFIG.answer_temperature,
                       provider=chat_provider, model=chat_model)
 
+        history = self._memory()
         subgraph = retrieve_subgraph(self.manager, question, self.cid,
                                      chat_provider=chat_provider,
-                                     chat_model=chat_model)
+                                     chat_model=chat_model,
+                                     history=history)
         graph_context = format_subgraph_as_text(subgraph)
 
         chunk_context = ""
@@ -96,7 +107,8 @@ class KnowledgeGraphRAG:
             chunk_context = format_chunks_as_text(chunks)
 
         answer = generate_answer(question, graph_context, chunk_context, llm=llm,
-                                 extra_instructions=self._conversation_instructions())
+                                 extra_instructions=self._conversation_settings()["system_prompt"],
+                                 history=history)
         return {
             "answer": answer,
             "graph_facts": len(subgraph.get("relationships", [])),
@@ -110,9 +122,11 @@ class KnowledgeGraphRAG:
         llm = get_llm(temperature=CONFIG.answer_temperature,
                       provider=chat_provider, model=chat_model)
 
+        history = self._memory()
         subgraph = retrieve_subgraph(self.manager, question, self.cid,
                                      chat_provider=chat_provider,
-                                     chat_model=chat_model)
+                                     chat_model=chat_model,
+                                     history=history)
         graph_context = format_subgraph_as_text(subgraph)
 
         chunk_context = ""
@@ -127,7 +141,8 @@ class KnowledgeGraphRAG:
             "chunks_used": n_chunks,
         }
         tokens = generate_answer_stream(question, graph_context, chunk_context, llm=llm,
-                                        extra_instructions=self._conversation_instructions())
+                                        extra_instructions=self._conversation_settings()["system_prompt"],
+                                        history=history)
         return meta, tokens
 
     # ------------------------------------------------------------------

@@ -35,10 +35,19 @@ OUTPUT (JSON array only):"""
 
 def extract_question_entities(question: str,
                               chat_provider: str | None = None,
-                              chat_model: str | None = None) -> List[str]:
+                              chat_model: str | None = None,
+                              history: List[dict] | None = None) -> List[str]:
     llm = get_llm(temperature=0.0, provider=chat_provider, model=chat_model)
     try:
-        raw = llm.invoke([("human", QUESTION_ENTITY_PROMPT.format(question=question))])
+        # For follow-up questions, give the extractor the recent questions so
+        # references like "and what about X?" can be resolved.
+        effective_question = question
+        if history:
+            recent = [t.get("question", "") for t in history[-3:]]
+            effective_question = (f"{question} "
+                                  f"(recent questions in this chat: {' | '.join(recent)})")
+        raw = llm.invoke([("human",
+                           QUESTION_ENTITY_PROMPT.format(question=effective_question))])
         text = raw.content.strip().replace("```json", "").replace("```", "").strip()
         start, end = text.find("["), text.rfind("]")
         data = json.loads(text[start:end + 1])
@@ -65,9 +74,10 @@ def resolve_seed_nodes(manager: Neo4jManager, names: List[str],
 
 def retrieve_subgraph(manager: Neo4jManager, question: str, conversation_id: str,
                       chat_provider: str | None = None,
-                      chat_model: str | None = None) -> Dict:
+                      chat_model: str | None = None,
+                      history: List[dict] | None = None) -> Dict:
     question_entities = extract_question_entities(
-        question, chat_provider, chat_model)
+        question, chat_provider, chat_model, history=history)
     print(f"[graph_retriever] Question entities: {question_entities}")
 
     seeds = resolve_seed_nodes(manager, question_entities, conversation_id)
@@ -129,8 +139,21 @@ DOCUMENT EXCERPTS:
 """
 
 
+def format_history(history: List[dict]) -> str:
+    """Render prior Q/A turns as a transcript block ('' when empty)."""
+    if not history:
+        return ""
+    lines = []
+    for i, turn in enumerate(history, start=1):
+        q = (turn.get("question") or "").strip().replace("\n", " ")
+        a = (turn.get("answer") or "").strip()
+        lines.append(f"[{i}] Q: {q}\n    A: {a}")
+    return "\n".join(lines)
+
+
 def _build_system_prompt(graph_context: str, chunk_context: str,
-                         extra_instructions: str = "") -> str:
+                         extra_instructions: str = "",
+                         history_text: str = "") -> str:
     prompt = HYBRID_ANSWER_PROMPT.format(
         refusal=REFUSAL_MESSAGE,
         graph_context=graph_context or "(no graph facts retrieved)",
@@ -142,6 +165,17 @@ def _build_system_prompt(graph_context: str, chunk_context: str,
                "Persian even when the question is in English (or vice versa). Use it "
                "as your knowledge source regardless of language, but write your final "
                "answer in the SAME language as the user's question.")
+    if history_text:
+        prompt += (
+            "\n\nCONVERSATION HISTORY (earlier turns of this chat):\n"
+            + history_text
+            + ("\n\nMEMORY RULE: The history above is trusted context from this same "
+               "conversation. If the current question refers to something discussed "
+               "earlier (follow-ups like 'and what about X?', 'explain more', or "
+               "pronouns), resolve it using the history. If the answer is already "
+               "contained in a previous turn, you may answer from that turn even when "
+               "the freshly retrieved material above is empty or unhelpful.")
+        )
     if extra_instructions and extra_instructions.strip():
         prompt += ("\n\nADDITIONAL BOT INSTRUCTIONS (highest priority — follow these "
                    "as well, e.g. persona, tone, how to behave when information is "
@@ -150,14 +184,20 @@ def _build_system_prompt(graph_context: str, chunk_context: str,
 
 
 def generate_answer(question: str, graph_context: str = "", chunk_context: str = "",
-                    llm=None, extra_instructions: str = "") -> str:
+                    llm=None, extra_instructions: str = "",
+                    history: List[dict] | None = None) -> str:
     graph_context = (graph_context or "").strip()
     chunk_context = (chunk_context or "").strip()
-    if not graph_context and not chunk_context:
+    history = history or []
+    history_text = format_history(history)
+
+    # Refuse only when there is neither fresh material NOR conversation memory.
+    if not graph_context and not chunk_context and not history_text:
         return REFUSAL_MESSAGE
 
     llm = llm or get_llm(temperature=CONFIG.answer_temperature)
-    system_prompt = _build_system_prompt(graph_context, chunk_context, extra_instructions)
+    system_prompt = _build_system_prompt(graph_context, chunk_context, extra_instructions,
+                                         history_text)
     response = llm.invoke([
         ("system", system_prompt),
         ("human", f"Question: {question}\n\nAnswer:"),
@@ -170,16 +210,21 @@ def generate_answer(question: str, graph_context: str = "", chunk_context: str =
 
 def generate_answer_stream(question: str, graph_context: str = "",
                            chunk_context: str = "", llm=None,
-                           extra_instructions: str = ""):
+                           extra_instructions: str = "",
+                           history: List[dict] | None = None):
     """Yield the answer in small chunks (token streaming) with provider failover."""
     graph_context = (graph_context or "").strip()
     chunk_context = (chunk_context or "").strip()
-    if not graph_context and not chunk_context:
+    history = history or []
+    history_text = format_history(history)
+
+    if not graph_context and not chunk_context and not history_text:
         yield REFUSAL_MESSAGE
         return
 
     llm = llm or get_llm(temperature=CONFIG.answer_temperature)
-    system_prompt = _build_system_prompt(graph_context, chunk_context, extra_instructions)
+    system_prompt = _build_system_prompt(graph_context, chunk_context, extra_instructions,
+                                         history_text)
     collected: list[str] = []
     for piece in llm.stream([
         ("system", system_prompt),

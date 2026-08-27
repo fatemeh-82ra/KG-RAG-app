@@ -25,6 +25,7 @@ def init_db() -> None:
             embedding_provider TEXT DEFAULT '',
             embedding_model TEXT DEFAULT '',
             system_prompt TEXT DEFAULT '',
+            memory_turns INTEGER DEFAULT 5,
             created_at REAL NOT NULL
         );
         CREATE TABLE IF NOT EXISTS messages (
@@ -65,18 +66,24 @@ def init_db() -> None:
         cols = [r["name"] for r in c.execute("PRAGMA table_info(conversations)")]
         if "user_id" not in cols:
             c.execute("ALTER TABLE conversations ADD COLUMN user_id TEXT DEFAULT ''")
+        cols = [r["name"] for r in c.execute("PRAGMA table_info(conversations)")]
+        if "memory_turns" not in cols:
+            c.execute("ALTER TABLE conversations ADD COLUMN memory_turns INTEGER DEFAULT 5")
 
 
 # ---------------------------------------------------------------------------
 # Conversations
 # ---------------------------------------------------------------------------
 
-def create_conversation(title: str, system_prompt: str = "", user_id: str = "") -> dict:
+def create_conversation(title: str, system_prompt: str = "", user_id: str = "",
+                        memory_turns: int = 5) -> dict:
     cid = uuid.uuid4().hex[:12]
     with _conn() as c:
-        c.execute("INSERT INTO conversations (id, title, system_prompt, created_at, user_id) "
-                  "VALUES (?, ?, ?, ?, ?)",
-                  (cid, title, system_prompt or "", time.time(), user_id))
+        c.execute("INSERT INTO conversations "
+                  "(id, title, system_prompt, memory_turns, created_at, user_id) "
+                  "VALUES (?, ?, ?, ?, ?, ?)",
+                  (cid, title, system_prompt or "", int(memory_turns),
+                   time.time(), user_id))
     return {"id": cid, "title": title}
 
 
@@ -87,24 +94,30 @@ def get_conversation(cid: str) -> Optional[dict]:
 
 
 def update_conversation(cid: str, title: Optional[str] = None,
-                        system_prompt: Optional[str] = None) -> None:
+                        system_prompt: Optional[str] = None,
+                        memory_turns: Optional[int] = None) -> None:
     with _conn() as c:
         if title is not None:
             c.execute("UPDATE conversations SET title = ? WHERE id = ?", (title, cid))
         if system_prompt is not None:
             c.execute("UPDATE conversations SET system_prompt = ? WHERE id = ?",
                       (system_prompt, cid))
+        if memory_turns is not None:
+            # configurable chat memory: how many recent Q/A turns go into the prompt
+            c.execute("UPDATE conversations SET memory_turns = ? WHERE id = ?",
+                      (max(0, min(int(memory_turns), 20)), cid))
 
 
 def list_conversations(user_id: Optional[str] = None) -> List[dict]:
     with _conn() as c:
         if user_id:
             rows = c.execute(
-                "SELECT id, title, created_at FROM conversations WHERE user_id = ? "
-                "ORDER BY created_at DESC", (user_id,)).fetchall()
+                "SELECT id, title, memory_turns, created_at FROM conversations "
+                "WHERE user_id = ? ORDER BY created_at DESC", (user_id,)).fetchall()
         else:
             rows = c.execute(
-                "SELECT id, title, created_at FROM conversations ORDER BY created_at DESC"
+                "SELECT id, title, memory_turns, created_at FROM conversations "
+                "ORDER BY created_at DESC"
             ).fetchall()
         return [dict(r) for r in rows]
 
@@ -137,6 +150,24 @@ def get_messages(cid: str) -> List[dict]:
         rows = c.execute("SELECT role, content, created_at FROM messages "
                          "WHERE conversation_id = ? ORDER BY id", (cid,)).fetchall()
         return [dict(r) for r in rows]
+
+
+def get_memory_pairs(cid: str, limit: int) -> List[dict]:
+    """Return the last `limit` question/answer turns of the conversation.
+
+    These are injected into the prompt as chat memory, so the bot can resolve
+    follow-up questions and reuse earlier answers."""
+    if limit <= 0:
+        return []
+    pairs: List[dict] = []
+    pending_q: Optional[str] = None
+    for m in get_messages(cid):
+        if m["role"] == "user":
+            pending_q = m["content"]
+        elif m["role"] == "assistant" and pending_q is not None:
+            pairs.append({"question": pending_q, "answer": m["content"]})
+            pending_q = None
+    return pairs[-limit:]
 
 
 def add_document(cid: str, filename: str, status: str = "queued") -> None:

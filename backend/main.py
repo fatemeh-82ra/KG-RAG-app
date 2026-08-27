@@ -128,11 +128,13 @@ def _get_pipeline(cid: str) -> KnowledgeGraphRAG:
 class ConversationIn(BaseModel):
     title: str
     system_prompt: Optional[str] = ""
+    memory_turns: Optional[int] = 5
 
 
 class ConversationPatch(BaseModel):
     title: Optional[str] = None
     system_prompt: Optional[str] = None
+    memory_turns: Optional[int] = None
 
 
 class ProviderIn(BaseModel):
@@ -226,7 +228,8 @@ def _own_conv(request: Request, cid: str) -> dict:
 def create_conversation(body: ConversationIn, request: Request):
     conv = store.create_conversation(body.title.strip() or "New conversation",
                                      body.system_prompt or "",
-                                     user_id=request.state.user_id or "")
+                                     user_id=request.state.user_id or "",
+                                     memory_turns=body.memory_turns or 5)
 
     # Lock the embedding spec now so later ingests stay consistent
     try:
@@ -240,7 +243,7 @@ def create_conversation(body: ConversationIn, request: Request):
 @app.patch("/api/conversations/{cid}")
 def patch_conversation(cid: str, body: ConversationPatch, request: Request):
     _own_conv(request, cid)
-    store.update_conversation(cid, body.title, body.system_prompt)
+    store.update_conversation(cid, body.title, body.system_prompt, body.memory_turns)
     return {"ok": True}
 
 

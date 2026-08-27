@@ -101,6 +101,7 @@ function Modal({ title, children, onClose }) {
 function ConversationModal({ initial, onSave, onClose }) {
   const [title, setTitle] = useState(initial?.title || '')
   const [sys, setSys] = useState(initial?.system_prompt || '')
+  const [memory, setMemory] = useState(initial?.memory_turns ?? 5)
   return (
     <Modal title={initial?.id ? 'Edit conversation' : 'New conversation'} onClose={onClose}>
       <label className="field">
@@ -113,11 +114,21 @@ function ConversationModal({ initial, onSave, onClose }) {
         <textarea rows={5} value={sys} onChange={(e) => setSys(e.target.value)}
                   placeholder={'Example:\nYou are the secretary of the university council. Answer formally in Persian. If the answer is not in the documents, politely say you cannot find it and suggest contacting the council office.'} />
       </label>
+      <label className="field">
+        <span>Chat memory — how many of the last Q/A turns are sent with every question (0 = off). The bot can answer follow-ups from these turns.</span>
+        <select value={memory} onChange={(e) => setMemory(Number(e.target.value))}>
+          {[0, 1, 2, 3, 5, 8, 10, 15, 20].map((n) => (
+            <option key={n} value={n}>
+              {n === 0 ? 'No memory' : `Last ${n} turn${n > 1 ? 's' : ''}`}
+            </option>
+          ))}
+        </select>
+      </label>
       <div className="modal-actions">
         <button className="btn" onClick={onClose}>Cancel</button>
         <button className="btn primary"
                 disabled={!title.trim()}
-                onClick={() => onSave(title.trim(), sys)}>
+                onClick={() => onSave(title.trim(), sys, memory)}>
           {initial?.id ? 'Save' : 'Create'}
         </button>
       </div>
@@ -259,6 +270,7 @@ export default function App() {
   const [error, setError] = useState('')
   const [modal, setModal] = useState(null)          // null | {mode:'new'} | {mode:'edit',conv} | {mode:'providers'}
   const [providers, setProviders] = useState([])
+  const [memoryTurns, setMemoryTurns] = useState(5) // chat memory of active conversation
   const [authed, setAuthed] = useState(!!api.getAuthToken())
   const bottomRef = useRef(null)
 
@@ -302,6 +314,8 @@ export default function App() {
   const selectConversation = async (id) => {
     setActiveId(id)
     setError('')
+    const conv = conversations.find((c) => c.id === id)
+    setMemoryTurns(conv?.memory_turns ?? 5)
     try {
       setMessages(await api.fetchMessages(id))
     } catch { setMessages([]) }
@@ -314,12 +328,13 @@ export default function App() {
     if (conv) setModal({ mode: 'edit', conv })
   }
 
-  const saveConversation = async (title, systemPrompt) => {
+  const saveConversation = async (title, systemPrompt, memory) => {
     try {
       if (modal?.mode === 'edit' && modal.conv) {
-        await api.updateConversation(modal.conv.id, { title, systemPrompt })
+        await api.updateConversation(modal.conv.id, { title, systemPrompt, memoryTurns: memory })
+        setMemoryTurns(memory)
       } else {
-        const conv = await api.createConversation(title, systemPrompt)
+        const conv = await api.createConversation(title, systemPrompt, memory)
         refreshConversations()
         setModal(null)
         selectConversation(conv.id)
@@ -328,6 +343,16 @@ export default function App() {
       refreshConversations()
     } catch (e) { setError(e.message) }
     setModal(null)
+  }
+
+  // Quick memory change from the toolbar (persists immediately)
+  const changeMemory = async (n) => {
+    setMemoryTurns(n)
+    if (!activeId) return
+    try {
+      await api.updateConversation(activeId, { memoryTurns: n })
+      refreshConversations()
+    } catch (e) { setError(e.message) }
   }
 
   const openProviders = async () => {
@@ -501,6 +526,14 @@ export default function App() {
                       title="Which model builds the knowledge graph when you upload files">
                 <option value="auto">Graph model: Auto (fallback chain)</option>
                 <option value="dropdown">Graph model: Same as chat model</option>
+              </select>
+              <select value={memoryTurns} onChange={(e) => changeMemory(Number(e.target.value))}
+                      title="Chat memory — how many recent Q/A turns are sent with each question">
+                {[0, 1, 2, 3, 5, 8, 10, 15, 20].map((n) => (
+                  <option key={n} value={n}>
+                    {n === 0 ? '🧠 Memory: off' : `🧠 Memory: last ${n}`}
+                  </option>
+                ))}
               </select>
               <button className="btn" onClick={openProviders} title="Manage custom LLM providers">
                 ⚙ Providers
