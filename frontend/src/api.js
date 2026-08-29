@@ -124,6 +124,25 @@ export const fetchDocuments = (id) =>
 export const fetchMessages = (id) =>
   fetch(`${BASE}/conversations/${id}/messages`, { headers: authHeaders() }).then(handle)
 
+// feedback: 'like' | 'dislike' | '' (clear). Disliked answers leave chat memory.
+export const setMessageFeedback = (id, messageId, feedback) =>
+  fetch(`${BASE}/conversations/${id}/messages/${messageId}/feedback`, {
+    method: 'POST',
+    headers: authHeaders({ 'Content-Type': 'application/json' }),
+    body: JSON.stringify({ feedback }),
+  }).then(handle)
+
+// share: public read-only link (like ChatGPT share)
+export const shareConversation = (id) =>
+  fetch(`${BASE}/conversations/${id}/share`, { method: 'POST', headers: authHeaders() }).then(handle)
+
+export const revokeShare = (id) =>
+  fetch(`${BASE}/conversations/${id}/share`, { method: 'DELETE', headers: authHeaders() }).then(handle)
+
+// public endpoint — no auth token needed
+export const fetchShared = (token) =>
+  fetch(`${BASE}/share/${token}`).then(handle)
+
 export const sendQuestion = (id, question, chatProvider, chatModel) =>
   fetch(`${BASE}/conversations/${id}/chat`, {
     method: 'POST',

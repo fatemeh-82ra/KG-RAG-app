@@ -38,7 +38,8 @@ _OPEN_PATHS = {"/api/auth/login", "/api/auth/signup", "/docs", "/redoc", "/opena
 
 def verify_auth(request: Request) -> None:
     path = request.url.path
-    if not path.startswith("/api") or path in _OPEN_PATHS:
+    # /api/share/<token> is public: anyone with the link can view the chat
+    if not path.startswith("/api") or path in _OPEN_PATHS or path.startswith("/api/share/"):
         request.state.user_id = None
         return
     token = request.headers.get("X-Auth-Token", "")
@@ -149,6 +150,10 @@ class ChatIn(BaseModel):
     question: str
     chat_provider: Optional[str] = None
     chat_model: Optional[str] = None
+
+
+class FeedbackIn(BaseModel):
+    feedback: str = ""          # 'like' | 'dislike' | '' (clear)
 
 
 # ---------------------------------------------------------------------------
@@ -270,6 +275,45 @@ def delete_conversation(cid: str, request: Request):
 def get_messages(cid: str, request: Request):
     _own_conv(request, cid)
     return store.get_messages(cid)
+
+
+@app.post("/api/conversations/{cid}/messages/{mid}/feedback")
+def message_feedback(cid: str, mid: int, body: FeedbackIn, request: Request):
+    """Rate an assistant answer. Disliked answers are excluded from chat memory."""
+    _own_conv(request, cid)
+    fb = body.feedback if body.feedback in ("like", "dislike") else ""
+    try:
+        store.set_message_feedback(cid, mid, fb)
+    except KeyError as e:
+        raise HTTPException(404, str(e))
+    return {"ok": True, "feedback": fb}
+
+
+@app.post("/api/conversations/{cid}/share")
+def share_conversation(cid: str, request: Request):
+    """Create (or reuse) a public read-only link for this conversation."""
+    _own_conv(request, cid)
+    try:
+        return {"share_id": store.set_share_id(cid)}
+    except KeyError:
+        raise HTTPException(404, "Conversation not found")
+
+
+@app.delete("/api/conversations/{cid}/share")
+def unshare_conversation(cid: str, request: Request):
+    """Revoke the public link."""
+    _own_conv(request, cid)
+    store.clear_share_id(cid)
+    return {"ok": True}
+
+
+@app.get("/api/share/{share_id}")
+def get_shared(share_id: str):
+    """Public, read-only view of a shared conversation (no auth required)."""
+    conv = store.get_shared_conversation(share_id)
+    if not conv:
+        raise HTTPException(404, "Shared conversation not found or link revoked")
+    return {"title": conv["title"], "messages": store.get_messages(conv["id"])}
 
 
 @app.get("/api/conversations/{cid}/documents")

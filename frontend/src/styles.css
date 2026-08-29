@@ -366,3 +366,70 @@ body {
   max-height: 140px;
 }
 .composer textarea:focus { border-color: var(--accent); }
+
+/* ---------------- Message actions (copy / like / dislike / repeat) ---------------- */
+
+.msg-actions {
+  display: flex;
+  gap: 3px;
+  margin-top: 7px;
+}
+.msg.assistant .msg-actions { justify-content: flex-start; }
+.msg.user .msg-actions { justify-content: flex-end; }
+
+.msg-btn {
+  background: none;
+  border: none;
+  cursor: pointer;
+  font-size: 13px;
+  line-height: 1;
+  padding: 3px 6px;
+  border-radius: 6px;
+  color: var(--muted);
+}
+.msg.assistant .msg-btn:hover { background: var(--border); color: var(--text); }
+.msg.user .msg-btn { color: rgba(255, 255, 255, .75); }
+.msg.user .msg-btn:hover { background: rgba(255, 255, 255, .18); color: #fff; }
+.msg-btn.active.like { color: var(--green); background: rgba(63, 185, 107, .12); }
+.msg-btn.active.dislike { color: var(--red); background: rgba(224, 82, 82, .12); }
+
+/* ---------------- Export / Share / Shared view ---------------- */
+
+/* while exporting to PDF, hide the interactive per-message buttons */
+.messages.exporting .msg-actions { display: none; }
+
+.share-url {
+  background: var(--panel2);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  padding: 10px 12px;
+  font-size: 13px;
+  direction: ltr;
+  text-align: left;
+  word-break: break-all;
+  margin-bottom: 12px;
+}
+
+.shared-wrap {
+  min-height: 100vh;
+  display: flex;
+  flex-direction: column;
+  background: var(--bg);
+}
+.shared-head {
+  padding: 14px 24px;
+  border-bottom: 1px solid var(--border);
+  background: var(--panel);
+}
+.shared-head h2 { font-size: 17px; margin-bottom: 2px; }
+.shared-head span { font-size: 12px; color: var(--muted); }
+.shared-body {
+  flex: 1;
+  width: min(900px, 100%);
+  margin: 0 auto;
+  padding: 20px 24px;
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+  overflow-y: auto;
+}

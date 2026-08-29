@@ -1,4 +1,5 @@
 import React, { useCallback, useEffect, useRef, useState } from 'react'
+import html2pdf from 'html2pdf.js'
 import * as api from './api'
 
 const STATUS_LABELS = {
@@ -245,18 +246,110 @@ function LoginScreen({ onLogin }) {
   )
 }
 
-function Message({ role, content, meta }) {
+function Message({ role, content, meta, id, feedback, onFeedback, onRepeat }) {
+  const [copied, setCopied] = useState(false)
+  const copy = async () => {
+    try {
+      await navigator.clipboard.writeText(content)
+      setCopied(true)
+      setTimeout(() => setCopied(false), 1300)
+    } catch { /* clipboard unavailable */ }
+  }
   return (
     <div className={`msg ${role}`}>
       <div className="bubble">
         {content}
         {meta && <div className="meta">{meta}</div>}
+        {content && (
+          <div className="msg-actions">
+            {role === 'assistant' && id && onFeedback && (
+              <>
+                <button
+                  className={`msg-btn ${feedback === 'like' ? 'active like' : ''}`}
+                  title="Good answer"
+                  onClick={() => onFeedback(id, feedback === 'like' ? '' : 'like')}
+                >👍</button>
+                <button
+                  className={`msg-btn ${feedback === 'dislike' ? 'active dislike' : ''}`}
+                  title="Bad answer — excluded from chat memory"
+                  onClick={() => onFeedback(id, feedback === 'dislike' ? '' : 'dislike')}
+                >👎</button>
+              </>
+            )}
+            <button className="msg-btn" title={copied ? 'Copied!' : 'Copy'} onClick={copy}>
+              {copied ? '✅' : '📋'}
+            </button>
+            {role === 'user' && onRepeat && (
+              <button className="msg-btn" title="Ask this question again"
+                      onClick={() => onRepeat(content)}>
+                🔁
+              </button>
+            )}
+          </div>
+        )}
+      </div>
+    </div>
+  )
+}
+
+function ShareModal({ url, onRevoke, onClose }) {
+  const [copied, setCopied] = useState(false)
+  const copy = async () => {
+    try {
+      await navigator.clipboard.writeText(url)
+      setCopied(true)
+      setTimeout(() => setCopied(false), 1500)
+    } catch { /* clipboard unavailable */ }
+  }
+  return (
+    <Modal title="Share conversation" onClose={onClose}>
+      <p className="modal-hint">
+        Anyone with this link can view a read-only copy of this chat — no login needed.
+        Use &quot;Revoke link&quot; to disable it again at any time.
+      </p>
+      <div className="share-url">{url}</div>
+      <div className="modal-actions">
+        <button className="btn" onClick={onRevoke}>Revoke link</button>
+        <button className="btn primary" onClick={copy}>{copied ? '✅ Copied!' : '📋 Copy link'}</button>
+      </div>
+    </Modal>
+  )
+}
+
+// Public read-only view for people opening a share link (#/share/<token>)
+function SharedChat({ token }) {
+  const [data, setData] = useState(null)
+  const [err, setErr] = useState('')
+  useEffect(() => {
+    api.fetchShared(token).then(setData).catch((e) => setErr(e.message))
+  }, [token])
+  return (
+    <div className="shared-wrap">
+      <div className="shared-head">
+        <h2>🔗 {data?.title || 'Shared chat'}</h2>
+        <span>Read-only shared conversation — KG-RAG</span>
+      </div>
+      <div className="shared-body">
+        {err && <div className="error">{err}</div>}
+        {!err && !data && <div className="hint">Loading…</div>}
+        {data && data.messages.length === 0 && <div className="hint">This conversation is empty.</div>}
+        {data?.messages.map((m, i) => <Message key={i} {...m} />)}
       </div>
     </div>
   )
 }
 
 export default function App() {
+  // public shared-chat route: #/share/<token>
+  const [shareToken] = useState(() => {
+    const m = window.location.hash.match(/^#\/share\/([A-Za-z0-9_-]+)/)
+    return m ? m[1] : null
+  })
+  if (shareToken) return <SharedChat token={shareToken} />
+  return <ChatApp />
+}
+
+function ChatApp() {
   const [conversations, setConversations] = useState([])
   const [activeId, setActiveId] = useState(null)
   const [messages, setMessages] = useState([])
@@ -271,8 +364,11 @@ export default function App() {
   const [modal, setModal] = useState(null)          // null | {mode:'new'} | {mode:'edit',conv} | {mode:'providers'}
   const [providers, setProviders] = useState([])
   const [memoryTurns, setMemoryTurns] = useState(5) // chat memory of active conversation
+  const [exportFormat, setExportFormat] = useState('pdf') // chat export format: pdf | txt
+  const [exporting, setExporting] = useState(false)     // PDF export in progress
   const [authed, setAuthed] = useState(!!api.getAuthToken())
   const bottomRef = useRef(null)
+  const messagesRef = useRef(null)
 
   const refreshConversations = useCallback(() => {
     api.fetchConversations().then(setConversations).catch(() => {})
@@ -360,6 +456,23 @@ export default function App() {
     try { setProviders(await api.fetchProviders()) } catch { setProviders([]) }
   }
 
+  // Share: create (or reuse) a public read-only link for the active conversation
+  const openShare = async () => {
+    if (!activeId) return
+    try {
+      const { share_id } = await api.shareConversation(activeId)
+      const url = `${window.location.origin}${window.location.pathname}#/share/${share_id}`
+      setModal({ mode: 'share', url, cid: activeId })
+    } catch (e) { setError(e.message) }
+  }
+
+  const revokeShare = async () => {
+    try {
+      await api.revokeShare(modal.cid)
+      setModal(null)
+    } catch (e) { setError(e.message) }
+  }
+
   const addProvider = async (p) => {
     try {
       await api.addProvider(p)
@@ -382,6 +495,63 @@ export default function App() {
     if (id === activeId) { setActiveId(null); setMessages([]); setStatus(null); setDocs([]) }
   }
 
+  // Export the active conversation: PDF (same visual style) or plain text
+  const exportChat = async () => {
+    if (!activeId || messages.length === 0 || exporting) return
+    const conv = conversations.find((c) => c.id === activeId)
+    const title = conv?.title || 'chat'
+    const safe = (title.replace(/[\\/:*?"<>|]+/g, '_').trim() || 'chat').slice(0, 60)
+    const stamp = new Date().toISOString().slice(0, 10)
+
+    if (exportFormat === 'pdf') {
+      const el = messagesRef.current
+      if (!el) return
+      setExporting(true)
+      el.classList.add('exporting')
+      // let the container grow to its full content height so html2canvas
+      // captures the whole chat, not just the scrolled viewport
+      const prev = { h: el.style.height, mh: el.style.maxHeight, ov: el.style.overflow, fx: el.style.flex }
+      el.style.height = `${el.scrollHeight}px`
+      el.style.maxHeight = 'none'
+      el.style.overflow = 'visible'
+      el.style.flex = '0 0 auto'
+      try {
+        await html2pdf().set({
+          margin: [8, 8, 8, 8],
+          filename: `${safe}_${stamp}.pdf`,
+          image: { type: 'jpeg', quality: 0.95 },
+          html2canvas: { scale: 2, backgroundColor: '#0f1117', useCORS: true },
+          jsPDF: { unit: 'mm', format: 'a4', orientation: 'portrait' },
+          pagebreak: { mode: ['css', 'legacy'] },
+        }).from(el).save()
+      } catch (e) {
+        setError(`PDF export failed: ${e.message}`)
+      } finally {
+        el.style.height = prev.h
+        el.style.maxHeight = prev.mh
+        el.style.overflow = prev.ov
+        el.style.flex = prev.fx
+        el.classList.remove('exporting')
+        setExporting(false)
+      }
+      return
+    }
+
+    // plain text
+    const now = new Date()
+    const content = `${title}\nExported: ${now.toLocaleString()}\n${'='.repeat(40)}\n\n` +
+      messages.map((m) => `${m.role === 'user' ? 'User' : 'Bot'}: ${m.content}`).join('\n\n')
+    const blob = new Blob([content], { type: 'text/plain;charset=utf-8' })
+    const url = URL.createObjectURL(blob)
+    const a = document.createElement('a')
+    a.href = url
+    a.download = `${safe}_${stamp}.txt`
+    document.body.appendChild(a)
+    a.click()
+    a.remove()
+    URL.revokeObjectURL(url)
+  }
+
   const upload = async (files) => {
     if (!files.length || !activeId) return
     try {
@@ -392,8 +562,8 @@ export default function App() {
     } catch (e) { setError(e.message) }
   }
 
-  const ask = async () => {
-    const q = input.trim()
+  const ask = async (questionArg) => {
+    const q = (questionArg ?? input).trim()
     if (!q || !activeId || busy) return
     setInput('')
     setBusy(true)
@@ -459,6 +629,8 @@ export default function App() {
           }
         }
       }
+      // Re-sync so fresh messages get their DB ids (needed for 👍/👎 feedback)
+      try { setMessages(await api.fetchMessages(activeId)) } catch { /* keep streamed */ }
     } catch (e) {
       setError(e.message)
       setMessages((msgs) => {
@@ -470,6 +642,12 @@ export default function App() {
       })
     }
     finally { setBusy(false) }
+  }
+
+  // Rate an assistant answer ('like' / 'dislike' / ''). Disliked answers leave chat memory.
+  const handleFeedback = async (messageId, fb) => {
+    setMessages((msgs) => msgs.map((m) => (m.id === messageId ? { ...m, feedback: fb } : m)))
+    try { await api.setMessageFeedback(activeId, messageId, fb) } catch (e) { setError(e.message) }
   }
 
   const chatProviders = models.chat.filter((p) => p.available)
@@ -535,16 +713,35 @@ export default function App() {
                   </option>
                 ))}
               </select>
+              <select value={exportFormat} onChange={(e) => setExportFormat(e.target.value)}
+                      title="File format for the chat export">
+                <option value="pdf">PDF (.pdf)</option>
+                <option value="txt">Plain text (.txt)</option>
+              </select>
+              <button className="btn" onClick={exportChat}
+                      disabled={!activeId || messages.length === 0 || exporting}
+                      title="Download the whole conversation as a file">
+                {exporting ? '⏳ …' : '⬇ Export'}
+              </button>
+              <button className="btn" onClick={openShare}
+                      disabled={!activeId || messages.length === 0}
+                      title="Create a public read-only link for this chat">
+                🔗 Share
+              </button>
               <button className="btn" onClick={openProviders} title="Manage custom LLM providers">
                 ⚙ Providers
               </button>
             </div>
 
-            <div className="messages">
+            <div className={`messages${exporting ? ' exporting' : ''}`} ref={messagesRef}>
               {messages.length === 0 && (
                 <div className="hint">Ask a question about your uploaded documents (English or فارسی).</div>
               )}
-              {messages.map((m, i) => <Message key={i} {...m} />)}
+              {messages.map((m, i) => (
+                <Message key={i} {...m}
+                         onFeedback={handleFeedback}
+                         onRepeat={(text) => ask(text)} />
+              ))}
               {busy && <div className="typing">Thinking…</div>}
               <div ref={bottomRef} />
             </div>
@@ -561,7 +758,7 @@ export default function App() {
                   if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); ask() }
                 }}
               />
-              <button className="btn primary" disabled={busy || !input.trim()} onClick={ask}>
+              <button className="btn primary" disabled={busy || !input.trim()} onClick={() => ask()}>
                 Send
               </button>
             </div>
@@ -588,6 +785,13 @@ export default function App() {
           providers={providers}
           onAdd={addProvider}
           onDelete={removeProvider}
+          onClose={() => setModal(null)}
+        />
+      )}
+      {modal?.mode === 'share' && (
+        <ShareModal
+          url={modal.url}
+          onRevoke={revokeShare}
           onClose={() => setModal(null)}
         />
       )}

@@ -69,6 +69,14 @@ def init_db() -> None:
         cols = [r["name"] for r in c.execute("PRAGMA table_info(conversations)")]
         if "memory_turns" not in cols:
             c.execute("ALTER TABLE conversations ADD COLUMN memory_turns INTEGER DEFAULT 5")
+        # lightweight migration for DBs created before public sharing existed
+        cols = [r["name"] for r in c.execute("PRAGMA table_info(conversations)")]
+        if "share_id" not in cols:
+            c.execute("ALTER TABLE conversations ADD COLUMN share_id TEXT DEFAULT ''")
+        # lightweight migration for DBs created before message feedback existed
+        mcols = [r["name"] for r in c.execute("PRAGMA table_info(messages)")]
+        if "feedback" not in mcols:
+            c.execute("ALTER TABLE messages ADD COLUMN feedback TEXT DEFAULT ''")
 
 
 # ---------------------------------------------------------------------------
@@ -128,6 +136,37 @@ def set_embedding_spec(cid: str, provider: str, model: str) -> None:
                   "WHERE id = ?", (provider, model, cid))
 
 
+# ---------------------------------------------------------------------------
+# Public sharing (read-only link, like ChatGPT share)
+# ---------------------------------------------------------------------------
+
+def set_share_id(cid: str) -> str:
+    """Create (or return the existing) public share token for a conversation."""
+    with _conn() as c:
+        row = c.execute("SELECT share_id FROM conversations WHERE id = ?", (cid,)).fetchone()
+        if not row:
+            raise KeyError("conversation not found")
+        if row["share_id"]:
+            return row["share_id"]
+        token = uuid.uuid4().hex[:16]
+        c.execute("UPDATE conversations SET share_id = ? WHERE id = ?", (token, cid))
+        return token
+
+
+def clear_share_id(cid: str) -> None:
+    """Revoke the public link (the conversation itself stays untouched)."""
+    with _conn() as c:
+        c.execute("UPDATE conversations SET share_id = '' WHERE id = ?", (cid,))
+
+
+def get_shared_conversation(share_id: str) -> Optional[dict]:
+    """Resolve a share token to {id, title}; None if invalid or revoked."""
+    with _conn() as c:
+        row = c.execute("SELECT id, title FROM conversations WHERE share_id = ?",
+                        (share_id,)).fetchone()
+        return dict(row) if row else None
+
+
 def delete_conversation(cid: str) -> None:
     with _conn() as c:
         c.execute("DELETE FROM messages WHERE conversation_id = ?", (cid,))
@@ -147,16 +186,30 @@ def add_message(cid: str, role: str, content: str) -> None:
 
 def get_messages(cid: str) -> List[dict]:
     with _conn() as c:
-        rows = c.execute("SELECT role, content, created_at FROM messages "
+        rows = c.execute("SELECT id, role, content, feedback, created_at FROM messages "
                          "WHERE conversation_id = ? ORDER BY id", (cid,)).fetchall()
         return [dict(r) for r in rows]
+
+
+def set_message_feedback(cid: str, message_id: int, feedback: str) -> None:
+    """Store 'like' / 'dislike' (or '' to clear) on an assistant message.
+
+    Feedback must stay inside the conversation it belongs to."""
+    with _conn() as c:
+        cur = c.execute("UPDATE messages SET feedback = ? "
+                        "WHERE id = ? AND conversation_id = ?",
+                        (feedback, message_id, cid))
+        if cur.rowcount == 0:
+            raise KeyError("message not found in this conversation")
 
 
 def get_memory_pairs(cid: str, limit: int) -> List[dict]:
     """Return the last `limit` question/answer turns of the conversation.
 
     These are injected into the prompt as chat memory, so the bot can resolve
-    follow-up questions and reuse earlier answers."""
+    follow-up questions and reuse earlier answers.
+    Turns whose answer was disliked (feedback = 'dislike') are excluded, so the
+    bot never reuses answers the user marked as bad."""
     if limit <= 0:
         return []
     pairs: List[dict] = []
@@ -165,7 +218,8 @@ def get_memory_pairs(cid: str, limit: int) -> List[dict]:
         if m["role"] == "user":
             pending_q = m["content"]
         elif m["role"] == "assistant" and pending_q is not None:
-            pairs.append({"question": pending_q, "answer": m["content"]})
+            if (m.get("feedback") or "") != "dislike":
+                pairs.append({"question": pending_q, "answer": m["content"]})
             pending_q = None
     return pairs[-limit:]
 
